@@ -101,9 +101,11 @@ export async function planVerifiedBinaryRate(
   const { table, outcome } = possible[0];
   const tableId = "public." + safeIdentifier(table.name);
   const outcomeId = safeIdentifier(outcome.name);
+  const outcomeNumber = outcome.type.toLowerCase() === "boolean"
+    ? "(CASE WHEN " + outcomeId + " THEN 1 ELSE 0 END)" : outcomeId;
   const probe = await readRows("SELECT " +
     "COUNT(*) FILTER (WHERE " + outcomeId + " IS NOT NULL)::integer AS present, " +
-    "COUNT(*) FILTER (WHERE " + outcomeId + " IS NOT NULL AND " + outcomeId + " NOT IN (0, 1))::integer AS invalid " +
+    "COUNT(*) FILTER (WHERE " + outcomeId + " IS NOT NULL AND " + outcomeNumber + " NOT IN (0, 1))::integer AS invalid " +
     "FROM " + tableId);
   if (!probe.length || Number(probe[0].present) <= 0 || Number(probe[0].invalid) !== 0) return null;
 
@@ -132,8 +134,8 @@ export async function planVerifiedBinaryRate(
   const groupId = safeIdentifier(selected.column);
   const sql = "SELECT " + groupId + "::text AS group_name, " +
     "COUNT(*)::integer AS total, " +
-    "COUNT(*) FILTER (WHERE " + outcomeId + " = 1)::integer AS positive, " +
-    "ROUND(100.0 * COUNT(*) FILTER (WHERE " + outcomeId +
+    "COUNT(*) FILTER (WHERE " + outcomeNumber + " = 1)::integer AS positive, " +
+    "ROUND(100.0 * COUNT(*) FILTER (WHERE " + outcomeNumber +
     " = 1) / NULLIF(COUNT(*), 0), 2) AS rate_pct " +
     "FROM " + tableId + " WHERE " + groupId + " IS NOT NULL AND " +
     outcomeId + " IS NOT NULL GROUP BY " + groupId +

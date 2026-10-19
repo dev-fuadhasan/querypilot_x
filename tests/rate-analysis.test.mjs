@@ -61,6 +61,19 @@ test("rate analysis works with an unrelated approval dataset", async () => {
   assert.equal(plan.outcome,"approved");
   assert.equal(parse(plan.sql)[0].type,"select");
 });
+test("boolean outcomes are handled as true/false rather than compared directly to integers", async () => {
+  const tables = [{ name: "applications", columns: [
+    { name: "department", type: "text" }, { name: "approved", type: "boolean" },
+  ] }];
+  const plan = await planVerifiedBinaryRate("approval rate by department", tables, async sql => {
+    if (sql.includes("AS present")) return [{ present: 90, invalid: 0 }];
+    if (sql.includes('DISTINCT "department"')) return [{ value: "Legal" }, { value: "Finance" }];
+    throw new Error("unexpected probe");
+  });
+  assert.ok(plan);
+  assert.match(plan.sql, /CASE WHEN "approved" THEN 1 ELSE 0 END/);
+  assert.equal(parse(plan.sql)[0].type, "select");
+});
 test("does not infer a binary rate when values are not 0/1", async () => {
   const plan=await planVerifiedBinaryRate("survival rate by sex",schema,async sql=>{
     if(sql.includes("AS present"))return [{present:891,invalid:891}];
