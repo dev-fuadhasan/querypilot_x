@@ -36,6 +36,8 @@ jobs:
         run: node --experimental-strip-types --test tests/rate-analysis.test.mjs
       - name: Responsive chart fidelity and verified rate comparison
         run: node --experimental-strip-types --test tests/visualization-data.test.mjs
+      - name: Decimal result formatting regression tests
+        run: node --experimental-strip-types --test tests/format-values.test.mjs
       - name: Type-check
         run: npm run typecheck
       - name: Production build
