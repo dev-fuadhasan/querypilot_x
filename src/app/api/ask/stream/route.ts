@@ -15,6 +15,8 @@ import { planVerifiedBinaryRate } from "@/lib/rate-analysis";
 import { relationshipAnalysis } from "@/lib/relationship-analysis";
 import type { RelationshipIntent } from "@/lib/relationship-analysis";
 import { recognizeEntityTrend, recognizeTopRanking, temporalTrendQuery, pivotTemporalTrend, missingTrendChoices, topRankingSql } from "@/lib/trend";
+import { planTemporalAnalysis } from "@/lib/temporal-analysis";
+import { contextualizeClarification } from "@/lib/clarification-context";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -171,6 +173,34 @@ export async function POST(request: NextRequest) {
           send({type:"clarification",...straightforward,originalQuestion:question,example:straightforward.optionQueries[0]});
           return;
         }
+        // Time series must follow the user's date, grain, and measure—not a single
+        // arbitrary observed row or a generic dashboard profile.
+        const temporal = await planTemporalAnalysis(question, schema, async candidate => {
+          const approved=guardSql(candidate);
+          enforceTables(approved,schema);
+          return active.mode==="oauth" ? managementReadOnly(active,approved)
+            : (await executeQuery(active.dbUrl||"",approved)).rows;
+        });
+        if (temporal?.action === "clarify") {
+          send({type:"clarification",question:temporal.question,options:temporal.options,
+            optionQueries:temporal.optionQueries,originalQuestion:question,
+            example:temporal.optionQueries[0]});
+          return;
+        }
+        if (temporal?.action === "query") {
+          const sql=guardSql(temporal.sql);
+          enforceTables(sql,schema);
+          send({type:"stage",stage:"executing",detail:"Aggregating verified historical observations",sql});
+          const data=active.mode==="oauth" ? await executeOAuthQuery(active,sql)
+            : await executeQuery(active.dbUrl||"",sql);
+          const report=await explainResult(question,sql,data);
+          const panels=data.rows.length ? [{
+            kind:temporal.chart.kind,title:temporal.title,data,sql,
+            xKey:temporal.chart.xKey,yKeys:temporal.chart.yKeys
+          }] : [];
+          send({type:"result",data,report,sql,panels});
+          return;
+        }
         // Deterministic preflight for comparative rankings and true historical trends.
         // Never manufacture five timeseries out of five snapshot rating values.
         const trendIntent = recognizeEntityTrend(question, schema);
@@ -198,7 +228,7 @@ export async function POST(request: NextRequest) {
         }
         const rankIntent = recognizeTopRanking(question, schema);
         if (rankIntent) {
-          const generated = topRankingSql(rankIntent,schema);
+          const generated = topRankingSql(rankIntent,schema,question);
           if (generated) {
             const sql = guardSql(generated);
             enforceTables(sql,schema);
@@ -297,14 +327,15 @@ export async function POST(request: NextRequest) {
         send({ type: "stage", stage: "planning", detail: "Understanding your question and generating PostgreSQL" });
         const planned = await planQuestion(question, schema);
         if (planned.action === "clarify") {
-          const project = await getProfile();
-          const choices = verifiedChoices(project, question);
-          send({ type: "clarification",
-            question: (planned.question || "Which data would you like to analyze?") + (choices.length ? " The options below were verified against this project." : " Type the specific table or metric you want."),
-            options: choices.map(choice => choice.label),
-            optionQueries: choices.map(choice => choice.query),
-            example: choices[0]?.query,
-            originalQuestion: question });
+          // Preserve the model's question-specific options. Replacing them with
+          // unrelated sampled values caused time-trend requests to turn into
+          // single-row filters such as "sales = 68.81".
+          const options=planned.options||[];
+          send({type:"clarification",
+            question:planned.question||"Which interpretation should I use?",
+            options,
+            optionQueries:options.map(choice=>contextualizeClarification(choice,question)),
+            example:options[0],originalQuestion:question});
           return;
         }
         let candidateSql = planned.sql || "";
