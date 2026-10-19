@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { initialProjectRef, resolveStartupPhase } from "@/lib/connection-flow";
-import { requestedChartTypes } from "@/lib/charts";
+import { buildDashboardCharts, requestedChartTypes } from "@/lib/charts";
 import { prepareHorizontalBars, rateHighlights } from "@/lib/visualization-data";
 import { contextualizeClarification, shouldUseClarificationContext } from "@/lib/clarification-context";
 import type { RelationshipIntent } from "@/lib/relationship-analysis";
@@ -222,8 +222,20 @@ function ChartView({ answer, view }: { answer: Answer; view: ChartSpec }) {
   const kind = view.type;
   const categoryColumn = data.columns.find(col => col.name === xKey);
   const metricColumn = data.columns.find(col => col.name === yKeys[0]);
-  const tooltipValue = (value: unknown, name: unknown) =>
-    valueText(value, data.columns.find(col => col.name === String(name)) || metricColumn);
+  const seriesName = (key: string) => view.seriesLabels?.[key] || prettyLabel(key);
+  const tooltipValue = (value: unknown, name: unknown) => {
+    const key = String(name);
+    const resolved = data.columns.find(col => col.name === key) ||
+      data.columns.find(col => seriesName(col.name) === key) || metricColumn;
+    const formatted = valueText(value, resolved);
+    return view.unit === "%" && !formatted.endsWith("%") ? formatted + "%" : formatted;
+  };
+  const axisLabelX = view.xLabel || prettyLabel(xKey);
+  const axisLabelY = view.yLabel || prettyLabel(yKeys[0]);
+  const context = <div className="chart-context" aria-label="Chart dimensions">
+    <span><strong>{kind === "bar" ? "Groups" : "X-axis"}:</strong> {axisLabelX}</span>
+    <span><strong>{kind === "bar" ? "Value axis" : kind === "pie" || kind === "donut" ? "Slice values" : "Y-axis"}:</strong> {axisLabelY}</span>
+  </div>;
   const premiumBars = prepareHorizontalBars(data, view);
   if (premiumBars) return <InsightHorizontalBarChart data={data} view={view}/>;
   if (kind === "card") {
@@ -257,6 +269,7 @@ function ChartView({ answer, view }: { answer: Answer; view: ChartSpec }) {
   return (
     <section className="viz-card">
       <div className="viz-heading"><span><BarChart3 size={16}/>{view.title}</span><span className="viz-hint">{kind.replace("-", " ").toUpperCase()}</span></div>
+      {context}
       <div className="chart-box">
         <ResponsiveContainer width="100%" height="100%">
           {kind === "pie" || kind === "donut" ? (
@@ -271,10 +284,10 @@ function ChartView({ answer, view }: { answer: Answer; view: ChartSpec }) {
           ) : kind === "scatter" ? (
             <ScatterChart margin={{ top: 12, right: 25, left: 4, bottom: 10 }}>
               <CartesianGrid stroke="#edf0f2"/>
-              <XAxis type="number" dataKey={xKey} name={prettyLabel(xKey)} tick={{ fill: "#90949c", fontSize: 10 }} tickFormatter={v => valueText(v, categoryColumn)}/>
-              <YAxis type="number" dataKey={yKeys[0]} name={prettyLabel(yKeys[0])} tick={{ fill: "#90949c", fontSize: 10 }} tickFormatter={v => valueText(v, metricColumn)}/>
+              <XAxis type="number" label={{ value: axisLabelX, position: "insideBottom", offset: -10 }} dataKey={xKey} name={axisLabelX} tick={{ fill: "#90949c", fontSize: 10 }} tickFormatter={v => valueText(v, categoryColumn)}/>
+              <YAxis type="number" label={{ value: axisLabelY, angle: -90, position: "insideLeft" }} dataKey={yKeys[0]} name={axisLabelY} tick={{ fill: "#90949c", fontSize: 10 }} tickFormatter={v => valueText(v, metricColumn)}/>
               <Tooltip cursor={{ strokeDasharray: "3 3" }} formatter={(value, name) => tooltipValue(value, name)}/>
-              <Scatter data={normalized} fill={COLORS[0]} name={prettyLabel(yKeys[0])}/>
+              <Scatter data={normalized} fill={COLORS[0]} name={seriesName(yKeys[0])}/>
             </ScatterChart>
           ) : kind === "radar" ? (
             <RadarChart data={normalized.slice(0, 14)} outerRadius="66%">
@@ -283,18 +296,18 @@ function ChartView({ answer, view }: { answer: Answer; view: ChartSpec }) {
               <PolarRadiusAxis tick={{ fill: "#9ca3af", fontSize: 9 }} tickFormatter={v => valueText(v, metricColumn)}/>
               <Tooltip formatter={(value, name) => tooltipValue(value, name)}/>
               {yKeys.length > 1 && <Legend/>}
-              {yKeys.map((key, i) => <Radar key={key} name={prettyLabel(key)} dataKey={key}
+              {yKeys.map((key, i) => <Radar key={key} name={seriesName(key)} dataKey={key}
                 stroke={COLORS[i]} fill={COLORS[i]} fillOpacity={0.14}/>)}
             </RadarChart>
           ) : kind === "area" ? (
             <AreaChart data={normalized} margin={{ top: 10, right: 18, left: 0, bottom: 7 }}>
               <CartesianGrid stroke="#edf0f2" vertical={false}/>
-              <XAxis dataKey={xKey} tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false} minTickGap={25}
+              <XAxis dataKey={xKey} label={{ value: axisLabelX, position: "insideBottom", offset: -10 }} tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false} minTickGap={25}
                 tickFormatter={v => valueText(v, categoryColumn).slice(0, 12)}/>
-              <YAxis tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false} width={55} tickFormatter={v => valueText(v, metricColumn)}/>
+              <YAxis label={{ value: axisLabelY, angle: -90, position: "insideLeft" }} tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false} width={70} tickFormatter={v => valueText(v, metricColumn)}/>
               <Tooltip formatter={(value, name) => tooltipValue(value, name)}/>
               {yKeys.length > 1 && <Legend/>}
-              {yKeys.map((key,i) => <Area key={key} type="monotone" dataKey={key}
+              {yKeys.map((key,i) => <Area key={key} name={seriesName(key)} type="monotone" dataKey={key}
                 stroke={COLORS[i % COLORS.length]} fill={COLORS[i % COLORS.length]} fillOpacity={0.12} strokeWidth={2.4}/>)}
             </AreaChart>
           ) : kind === "line" ? (
@@ -305,18 +318,18 @@ function ChartView({ answer, view }: { answer: Answer; view: ChartSpec }) {
               <YAxis tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false} width={55} tickFormatter={v => valueText(v, metricColumn)}/>
               <Tooltip formatter={(value, name) => tooltipValue(value, name)}/>
               {yKeys.length > 1 && <Legend wrapperStyle={{fontSize:10,whiteSpace:"normal"}}/>}
-              {yKeys.map((key,i) => <Line key={key} type="monotone" dataKey={key}
+              {yKeys.map((key,i) => <Line key={key} name={seriesName(key)} type="monotone" dataKey={key}
                 stroke={COLORS[i % COLORS.length]} strokeWidth={2.6} dot={{ r: 2.5 }} activeDot={{ r: 4.5 }}/>)}
             </LineChart>
           ) : kind === "combo" ? (
             <ComposedChart data={normalized} margin={{ top: 10, right: 18, left: 0, bottom: 7 }}>
               <CartesianGrid stroke="#edf0f2" vertical={false}/>
-              <XAxis dataKey={xKey} tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false}
+              <XAxis dataKey={xKey} label={{ value: axisLabelX, position: "insideBottom", offset: -10 }} tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false}
                 tickFormatter={v => valueText(v, categoryColumn).slice(0, 12)}/>
               <YAxis tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false} width={55} tickFormatter={v => valueText(v, metricColumn)}/>
               <Tooltip formatter={(value, name) => tooltipValue(value, name)}/><Legend/>
-              <Bar dataKey={yKeys[0]} fill={COLORS[0]} radius={[4,4,0,0]} maxBarSize={46}/>
-              <Line type="monotone" dataKey={yKeys[1]} stroke={COLORS[1]} strokeWidth={2.4}/>
+              <Bar name={seriesName(yKeys[0])} dataKey={yKeys[0]} fill={COLORS[0]} radius={[4,4,0,0]} maxBarSize={46}/>
+              <Line name={seriesName(yKeys[1])} type="monotone" dataKey={yKeys[1]} stroke={COLORS[1]} strokeWidth={2.4}/>
             </ComposedChart>
           ) : (
             <BarChart data={normalized} layout={isBar ? "vertical" : "horizontal"}
@@ -324,20 +337,20 @@ function ChartView({ answer, view }: { answer: Answer; view: ChartSpec }) {
               <CartesianGrid stroke="#edf0f2" vertical={!isBar} horizontal={isBar}/>
               {isBar ? (
                 <>
-                  <XAxis type="number" tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={v => valueText(v, metricColumn)}/>
-                  <YAxis type="category" dataKey={xKey} width={110} tick={{ fill: "#90949c", fontSize: 10 }}
+                  <XAxis type="number" label={{ value: axisLabelY, position: "insideBottom", offset: -10 }} tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={v => valueText(v, metricColumn)}/>
+                  <YAxis type="category" label={{ value: axisLabelX, angle: -90, position: "insideLeft" }} dataKey={xKey} width={135} tick={{ fill: "#90949c", fontSize: 10 }}
                     tickFormatter={v => valueText(v, categoryColumn).slice(0, 17)}/>
                 </>
               ) : (
                 <>
-                  <XAxis type="category" dataKey={xKey} tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false}
+                  <XAxis type="category" label={{ value: axisLabelX, position: "insideBottom", offset: -10 }} dataKey={xKey} tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false}
                     axisLine={false} tickFormatter={v => valueText(v, categoryColumn).slice(0, 13)}/>
-                  <YAxis type="number" tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false} width={55}/>
+                  <YAxis type="number" label={{ value: axisLabelY, angle: -90, position: "insideLeft" }} tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false} width={70}/>
                 </>
               )}
               <Tooltip formatter={(value, name) => tooltipValue(value, name)}/>
               {yKeys.length > 1 && <Legend/>}
-              {yKeys.map((key,i) => <Bar key={key} dataKey={key} fill={COLORS[i]}
+              {yKeys.map((key,i) => <Bar key={key} name={seriesName(key)} dataKey={key} fill={COLORS[i]}
                 stackId={kind === "stacked-column" ? "stack" : undefined}
                 radius={kind === "stacked-column" ? 0 : isBar ? [0,4,4,0] : [4,4,0,0]}
                 maxBarSize={46}/>)}
@@ -345,6 +358,7 @@ function ChartView({ answer, view }: { answer: Answer; view: ChartSpec }) {
           )}
         </ResponsiveContainer>
       </div>
+      {view.note && <p className="chart-explanation">{view.note}</p>}
     </section>
   );
 }
@@ -389,8 +403,17 @@ function AnswerCanvas({ answer, question }: { answer: Answer; question: string }
         <div className="charts-grid single-chart">
           {panels.map((panel, index) => (
             <div className="chart-panel-block" key={panel.kind + ":" + index}>
-              <ChartView answer={{ data: panel.data, report: { ...report, visualizations: [] }, sql: panel.sql }}
-                view={{ type: panel.kind, title: panel.title, xKey: panel.xKey, yKeys: panel.yKeys }}/>
+              {(() => {
+                const appropriate = buildDashboardCharts(question, panel.data, [{
+                  type: panel.kind, title: panel.title, xKey: panel.xKey, yKeys: panel.yKeys
+                }]).find(view => view.type === panel.kind);
+                return appropriate ? <ChartView answer={{
+                  data: panel.data, report: { ...report, visualizations: [] }, sql: panel.sql
+                }} view={appropriate}/> : <div className="chart-unavailable">
+                  <CircleHelp size={17}/> The requested {panel.kind} chart does not fit these
+                  verified measurements. The executed data and SQL are still available below.
+                </div>;
+              })()}
               {panels.length > 1 && (
                 <details className="chart-panel-sql">
                   <summary><Database size={14}/> Executed SQL for {panel.kind} chart <ChevronDown size={14}/></summary>
