@@ -5,12 +5,13 @@ import { readSession, saveSession, verifySameOrigin } from "@/lib/session";
 import { explainResult, planQuestion, repairQuestion } from "@/lib/ai";
 import { enrichSchemaWithExamples } from "@/lib/profiles";
 import type { TableInfo } from "@/lib/database";
+import { findExactNumericFilter, numericStatsSql, rangeCountsSql, rangeDefinitions, buildMissingValueClarification } from "@/lib/value-check";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 type StreamEvent =
-  | { type: "stage"; stage: "schema" | "planning" | "validated" | "executing" | "report"; detail: string; sql?: string }
-  | { type: "clarification"; question: string; options: string[]; originalQuestion: string }
+  | { type: "stage"; stage: "schema" | "checking" | "planning" | "validated" | "executing" | "report"; detail: string; sql?: string }
+  | { type: "clarification"; question: string; options: string[]; optionQueries?: string[]; originalQuestion: string }
   | { type: "result"; data: Awaited<ReturnType<typeof executeQuery>>; report: Awaited<ReturnType<typeof explainResult>>; sql: string }
   | { type: "error"; error: string };
 
@@ -63,6 +64,30 @@ export async function POST(request: NextRequest) {
           if (active.mode === "oauth") return managementReadOnly(active, sql);
           return (await executeQuery(active.dbUrl || "", sql)).rows;
         });
+        const exact = findExactNumericFilter(question, schema);
+        if (exact) {
+          send({ type: "stage", stage: "checking", detail: "Checking the requested " + exact.column + " against real database values" });
+          const check = async (sql: string) => {
+            const approved = guardSql(sql);
+            enforceTables(approved, schema);
+            return active.mode === "oauth"
+              ? managementReadOnly(active, approved)
+              : (await executeQuery(active.dbUrl || "", approved)).rows;
+          };
+          // Never claim a value is absent without a successful database check.
+          const stats = (await check(numericStatsSql(exact)))[0];
+          if (!stats) throw new Error("The connected dataset did not return numeric-value statistics.");
+          if (Number(stats.exact_matches) === 0 && Number(stats.valid_count) > 0) {
+            const min = Number(stats.min_value), max = Number(stats.max_value);
+            const bands = rangeDefinitions(min, max, exact.value);
+            const counts = bands.length ? (await check(rangeCountsSql(exact, bands)))[0] || {} : {};
+            const clarification = buildMissingValueClarification(question, exact, stats, bands, counts);
+            if (clarification) {
+              send({ type: "clarification", ...clarification, originalQuestion: question });
+              return;
+            }
+          }
+        }
         send({ type: "stage", stage: "planning", detail: "Understanding your question and generating PostgreSQL" });
         const planned = await planQuestion(question, schema);
         if (planned.action === "clarify") {

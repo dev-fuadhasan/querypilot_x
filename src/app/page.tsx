@@ -34,17 +34,19 @@ type Report = {
 type Answer = { data: DataResult; report: Report; sql: string };
 type Message = {
   id: number; role: "user" | "assistant"; text: string;
-  options?: string[]; original?: string;
+  options?: string[]; optionQueries?: string[]; original?: string;
 };
 type AskReply =
   | { type: "stage"; stage: ProgressStage; detail: string; sql?: string }
-  | { type: "clarification"; question: string; options: string[]; originalQuestion: string }
+  | ({ type: "clarification" } & Clarification)
   | ({ type: "result" } & Answer)
   | { type: "error"; error: string };
-type ProgressStage = "schema" | "planning" | "validated" | "executing" | "report";
+type ProgressStage = "schema" | "checking" | "planning" | "validated" | "executing" | "report";
 type Progress = { stage: ProgressStage; detail: string; sql?: string };
+type Clarification = { question: string; options: string[]; optionQueries?: string[]; originalQuestion: string };
 const STAGES: { stage: ProgressStage; label: string; description: string }[] = [
   { stage: "schema", label: "Inspect database", description: "Discovering available tables" },
+  { stage: "checking", label: "Validate request", description: "Checking actual dataset values" },
   { stage: "planning", label: "Generate SQL", description: "Translating your question" },
   { stage: "validated", label: "Validate query", description: "Checking read-only SQL" },
   { stage: "executing", label: "Execute SQL", description: "Querying Supabase" },
@@ -200,7 +202,7 @@ function AnswerCanvas({ answer, question }: { answer: Answer; question: string }
           <div className="insight-list">{report.insights.map((item, index) => <div className="insight" key={index}><span className="insight-number">{String(index + 1).padStart(2, "0")}</span><p>{item}</p></div>)}</div>
         ) : <p className="analysis-copy">{report.summary}</p>}
         {report.caveats.length > 0 && <div className="caveat"><CircleHelp size={15}/><div>{report.caveats.join(" ")}</div></div>}
-        <details className="sql-disclosure">
+        <details className="sql-disclosure" open>
           <summary><span><Database size={15}/> View executed SQL</span><ChevronDown size={15}/></summary>
           <pre>{answer.sql}</pre>
         </details>
@@ -224,7 +226,8 @@ function QueryProgress({ progress }: { progress: Progress }) {
         <h2>{progress.stage === "validated" ? "SQL validated" :
           progress.stage === "executing" ? "Executing your query" :
           progress.stage === "report" ? "Preparing your analysis" :
-          progress.stage === "planning" ? "Generating your SQL" : "Exploring your database"}</h2>
+          progress.stage === "planning" ? "Generating your SQL" :
+          progress.stage === "checking" ? "Validating against your data" : "Exploring your database"}</h2>
         <p className="progress-subtitle">{progress.detail}</p>
         <div className="progress-steps">
           {STAGES.map((step, i) => (
@@ -265,6 +268,10 @@ export default function Home() {
   const [question, setQuestion] = useState("");
   const [currentQuestion, setCurrentQuestion] = useState("");
   const [answer, setAnswer] = useState<Answer | null>(null);
+  const [activeClarification, setActiveClarification] = useState<Clarification | null>(null);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const requestIdRef = useRef(0);
+  const requestAbortRef = useRef<AbortController | null>(null);
   const [asking, setAsking] = useState(false);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [toast, setToast] = useState<{ text: string; error?: boolean } | null>(null);
@@ -326,7 +333,9 @@ export default function Home() {
       if (!res.ok) throw new Error(data.error || "Could not connect this project.");
       setProjectRef(targetRef);
       setSession((old) => old ? { ...old, connected: true, mode: "oauth", projectRef: targetRef, projectName: data.projectName } : old);
-      setAnswer(null); setMessages([]); setProgress(null); setCurrentQuestion(""); setQuestion("");
+      requestIdRef.current += 1;
+      requestAbortRef.current?.abort();
+      setAnswer(null); setMessages([]); setProgress(null); setActiveClarification(null); setAnalysisError(null); setCurrentQuestion(""); setQuestion("");
       setSwitchOpen(false);
       setPhase("workspace");
       notify("Connected to " + data.projectName + ".");
@@ -347,7 +356,9 @@ export default function Home() {
       setSession((old) => old ? { ...old, connected: true, mode: "postgres", projects: [], projectName: data.projectName } : old);
       setDatabaseUri("");
       setPhase("workspace");
-      setAnswer(null); setMessages([]); setProgress(null);
+      requestIdRef.current += 1;
+      requestAbortRef.current?.abort();
+      setAnswer(null); setMessages([]); setProgress(null); setActiveClarification(null); setAnalysisError(null);
       notify("Your database is connected.");
     } catch (err) { notify(err instanceof Error ? err.message : "Could not connect.", true); }
     finally { setConnecting(false); }
@@ -356,9 +367,13 @@ export default function Home() {
     try {
       const res = await fetch("/api/disconnect", { method: "POST" });
       if (!res.ok) throw new Error("Could not disconnect.");
+      requestIdRef.current += 1;
+      requestAbortRef.current?.abort();
       setAnswer(null);
       setMessages([]);
       setProgress(null);
+      setActiveClarification(null);
+      setAnalysisError(null);
       setProjectRef("");
       setSwitchOpen(false);
       setSession((old) => old ? { ...old, connected: false, mode: null, projectRef: undefined, projects: [], projectName: "" } : old);
@@ -369,15 +384,28 @@ export default function Home() {
   async function askQuestion(text: string, displayText?: string) {
     const prompt = text.trim();
     if (!prompt || asking || !session?.connected) return;
+    const requestId = ++requestIdRef.current;
+    requestAbortRef.current?.abort();
+    const controller = new AbortController();
+    requestAbortRef.current = controller;
     setQuestion("");
     setAsking(true);
-    setProgress({ stage: "schema", detail: "Connecting to your approved Supabase schema" });
+    // Never keep showing the last question's visualization while processing a new request.
+    setAnswer(null);
+    setActiveClarification(null);
+    setAnalysisError(null);
+    setCurrentQuestion(displayText || prompt);
+    setProgress({ stage: "schema", detail: "Inspecting connected Supabase tables and values" });
     setMessages((old) => [...old, { id: nextMessage(), role: "user", text: displayText || prompt }]);
+    const isLatest = () => requestId === requestIdRef.current && !controller.signal.aborted;
     try {
       const response = await fetch("/api/ask/stream", {
         method: "POST", headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        cache: "no-store",
         body: JSON.stringify({ question: prompt }),
       });
+      if (!isLatest()) return;
       if (!response.ok) {
         const value = await response.json() as { error?: string };
         throw new Error(value.error || "Unable to analyze your data.");
@@ -387,49 +415,60 @@ export default function Home() {
       const decoder = new TextDecoder();
       let buffer = "";
       let finished = false;
-      async function handleEvent(item: AskReply) {
+      function handleEvent(item: AskReply) {
+        if (!isLatest()) return;
         if (item.type === "stage") {
           setProgress({ stage: item.stage, detail: item.detail, sql: item.sql });
         } else if (item.type === "clarification") {
           finished = true;
           setProgress(null);
+          setActiveClarification(item);
           setMessages((old) => [...old, {
             id: nextMessage(), role: "assistant", text: item.question,
-            options: item.options, original: item.originalQuestion,
+            options: item.options, optionQueries: item.optionQueries, original: item.originalQuestion,
           }]);
         } else if (item.type === "result") {
           finished = true;
           setAnswer({ data: item.data, report: item.report, sql: item.sql });
-          setCurrentQuestion(prompt);
           setProgress(null);
+          setActiveClarification(null);
           setMessages((old) => [...old, {
             id: nextMessage(), role: "assistant",
-            text: item.data.rows.length ? "The analysis is ready. Explore the verified results and AI report on the left." :
-              "The query completed but returned no matching records. The workspace has more details.",
+            text: item.data.rows.length ? "Your new analysis is ready. See the results and report on the left." :
+              "The query completed without matching rows. Explore its SQL and report on the left.",
           }]);
         } else if (item.type === "error") {
           throw new Error(item.error);
         }
       }
-      while (true) {
+      while (isLatest()) {
         const { done, value } = await reader.read();
+        if (!isLatest()) return;
         buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
         const lines = buffer.split("\n");
         buffer = lines.pop() || "";
-        for (const line of lines) if (line.trim()) await handleEvent(JSON.parse(line) as AskReply);
+        for (const line of lines) if (line.trim()) handleEvent(JSON.parse(line) as AskReply);
         if (done) {
-          if (buffer.trim()) await handleEvent(JSON.parse(buffer) as AskReply);
+          if (buffer.trim()) handleEvent(JSON.parse(buffer) as AskReply);
           break;
         }
       }
-      if (!finished) throw new Error("The response ended before analysis was complete. Try again.");
+      if (isLatest() && !finished) throw new Error("The response ended before analysis was complete. Try again.");
     } catch (error) {
+      if (!isLatest()) return;
+      const message = error instanceof Error ? error.message : "Something went wrong. Please try again.";
       setProgress(null);
-      setMessages((old) => [...old, {
-        id: nextMessage(), role: "assistant",
-        text: error instanceof Error ? error.message : "Something went wrong. Please try again.",
-      }]);
-    } finally { setAsking(false); }
+      setAnalysisError(message);
+      setMessages((old) => [...old, { id: nextMessage(), role: "assistant", text: message }]);
+    } finally {
+      if (isLatest()) {
+        setAsking(false);
+        requestAbortRef.current = null;
+      }
+    }
+  }
+  function selectClarification(option: string, query: string) {
+    void askQuestion(query, option);
   }
 
   return (
@@ -574,7 +613,31 @@ export default function Home() {
               </div>
             </header>
             <main className="results-scroll">
-              {asking && progress ? <QueryProgress progress={progress}/> : !answer ? (
+              {asking && progress ? <QueryProgress progress={progress}/> :
+                activeClarification ? (
+                  <div className="clarification-canvas">
+                    <div className="clarification-card">
+                      <span className="clarification-kicker"><CircleHelp size={15}/> CHECKED AGAINST YOUR DATA</span>
+                      <h2>Choose an available value</h2>
+                      <p>{activeClarification.question}</p>
+                      <div className="clarification-canvas-options">
+                        {activeClarification.options.map((option, index) => (
+                          <button key={option} type="button" disabled={asking} onClick={() => selectClarification(
+                            option, activeClarification.optionQueries?.[index] || activeClarification.originalQuestion + ". Clarification: " + option
+                          )}>{option}<ArrowRight size={15}/></button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                ) : analysisError ? (
+                  <div className="clarification-canvas">
+                    <div className="clarification-card">
+                      <span className="clarification-kicker"><CircleHelp size={15}/> QUERY COULD NOT BE COMPLETED</span>
+                      <h2>No results for this request</h2><p>{analysisError}</p>
+                      <small>You can adjust your question and try again. Previous results were cleared to avoid displaying outdated data.</small>
+                    </div>
+                  </div>
+                ) : !answer ? (
                 <div className="empty-results">
                   <div className="empty-icon"><Sparkles size={26} strokeWidth={1.5}/></div>
                   <h2>Ask. Analyze. Understand.</h2>
@@ -604,7 +667,7 @@ export default function Home() {
                     <div className="message-bubble">{message.text}</div>
                     {message.options && (
                       <div className="clarification-options">{message.options.map((option) =>
-                        <button key={option} disabled={asking} onClick={() => askQuestion(message.original + ". Clarification: " + option, option)}>
+                        <button key={option} disabled={asking} onClick={() => selectClarification(option, message.optionQueries?.[message.options?.indexOf(option) ?? -1] || message.original + ". Clarification: " + option)}>
                           {option}<ArrowRight size={14}/>
                         </button>
                       )}</div>

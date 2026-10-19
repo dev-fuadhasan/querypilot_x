@@ -229,3 +229,62 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 @media(max-width:720px){.project-switch-menu{right:-37px;top:calc(100% + 11px)}.project-choice-list{max-height:160px}.connected-pill .connected-name{max-width:110px}}
 
 .session-loading{height:100%;width:100%;display:flex;align-items:center;justify-content:center;background:#fff}
+
+
+/* Latest-result clarity, dataset-grounded questions and readable SQL */
+.query-progress{align-items:flex-start;min-height:100%;padding-block:clamp(22px,4vh,44px)}
+.progress-shell{width:min(850px,100%)}
+.progress-icon{margin-bottom:16px}
+.progress-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0 16px;padding:12px 18px}
+.progress-step{min-width:0}
+.progress-step strong,.progress-step small{overflow-wrap:anywhere}
+.progress-live{display:none}
+.query-code{overflow:visible}
+.query-code pre{max-height:none!important;overflow:visible!important;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;tab-size:2;font-size:clamp(10px,.84vw,12px);line-height:1.8;padding:18px 20px}
+.query-code-top{flex-wrap:wrap}
+.sql-disclosure{overflow:visible!important}
+.sql-disclosure pre{max-height:none!important;overflow:visible!important;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;tab-size:2;font-size:clamp(10px,.84vw,12px);line-height:1.85}
+.clarification-canvas{min-height:100%;display:flex;justify-content:center;align-items:center;padding:24px}
+.clarification-card{width:min(640px,100%);border:1px solid #e7e8ec;border-radius:16px;background:#fff;box-shadow:0 8px 38px rgba(32,35,43,.035);padding:clamp(20px,3vw,38px);display:flex;flex-direction:column;gap:15px}
+.clarification-kicker{display:flex;align-items:center;gap:8px;font-size:10px;font-weight:800;letter-spacing:1.25px;color:#668a74}
+.clarification-card h2{font-size:clamp(22px,2.1vw,30px);font-weight:720;line-height:1.2;letter-spacing:-.8px;margin:0}
+.clarification-card p{font-size:13px;line-height:1.85;color:#616873;margin:0}
+.clarification-card>small{color:#949aa2;line-height:1.7}
+.clarification-canvas-options{display:flex;flex-direction:column;gap:9px;margin-top:6px}
+.clarification-canvas-options button{padding:14px 16px;display:flex;align-items:center;justify-content:space-between;gap:12px;text-align:left;line-height:1.5;border:1px solid #e6e8ed;background:#fafbfc;color:#353941;border-radius:10px;font-size:12px;font-weight:620;transition:background .18s,border-color .18s}
+.clarification-canvas-options button:hover:not(:disabled){background:#f3f5f7;border-color:#c6cacf}
+.clarification-canvas-options svg{flex-shrink:0;color:#7b828b}
+.results-scroll{min-width:0}
+.answer-canvas,.analysis-card,.query-progress,.query-code{min-width:0}
+.answer-canvas *{max-width:100%}
+@media(max-width:1120px){
+  .progress-steps{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .query-code pre,.sql-disclosure pre{font-size:11px}
+}
+@media(max-width:960px){
+  .workspace{flex-direction:column}
+  .workspace-main{height:56%;flex:0 0 56%;min-height:0}
+  .chat-panel{flex:1 1 auto;flex-basis:auto!important;height:44%;min-height:0;width:100%;border-left:0;border-top:1px solid #e7eaee}
+  .query-progress{padding:20px}
+  .progress-shell{max-width:100%}
+}
+@media(max-width:720px){
+  .workspace-main{height:54%;flex-basis:54%}
+  .chat-panel{height:46%}
+  .progress-shell h2{margin-top:7px}
+  .progress-steps{grid-template-columns:repeat(2,minmax(0,1fr));gap:0 10px}
+  .progress-step{padding:9px 0}
+  .progress-step small{display:block;font-size:9px}
+  .query-code pre,.sql-disclosure pre{font-size:10px;line-height:1.7;padding:12px}
+  .query-progress{padding:14px}
+  .clarification-canvas{padding:12px;align-items:flex-start}
+  .clarification-card{padding:18px;gap:11px}
+  .clarification-canvas-options button{padding:11px 12px}
+}
+@media(max-width:430px){
+  .progress-steps{grid-template-columns:1fr}
+  .progress-step{min-height:37px}
+  .progress-step small{display:none}
+  .query-code-top{padding:10px}
+  .query-code pre{font-size:10px}
+}

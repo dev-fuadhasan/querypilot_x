@@ -133,3 +133,12 @@ On later page reloads, QueryPilot restores the selected project from the encrypt
 Inside the dashboard, click the **current project name with its dropdown arrow** to show your other authorized projects. Select a project to verify its read-only database access. Only after successful verification does the active session change; the prior project's chat, SQL output and visualizations are cleared. If verification fails, the previous active project stays selected and no data is mixed. New project selection does **not** require repeating Supabase consent while the OAuth authorization remains valid.
 
 Manual connection remains an advanced fallback for accounts where the Supabase read-only Management API is unavailable.
+
+
+## Dataset-aware clarification (instead of empty SQL results)
+
+QueryPilot X checks **explicit exact numeric filters** such as "products rating 5.3" against an authorized project's real column values before generating the main SQL. It discovers tables and column types dynamically, converts numeric-looking text values for validation, and checks exact-match counts plus available minimum/maximum values. If there are no exact matches, it runs a read-only band count and offers clickable **data-backed ranges**. A selected option replaces the impossible exact value; it does not keep applying the old filter.
+
+The first version covers explicit numeric equality wording (rating, price, score and related metric columns). It does not promise to prevalidate every natural-language filter or every kind of date/category value yet. Database sampling and checks remain SELECT-only. If a probe itself fails, the app should report the error rather than invent available ranges.
+
+On every new question, the UI clears the prior analysis and shows the live query stages. Aborted or older requests are guarded against overwriting later responses. SQL is word-wrapped with no nested scrolling inside the code preview. Very long SQL or reports can still require scrolling the **main result pane** on a small screen, where content cannot physically fit at once.
