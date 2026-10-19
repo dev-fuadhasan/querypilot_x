@@ -94,7 +94,7 @@ export function starterQuestions(tables: TableProfile[]): string[] {
       questions.push("Compare record counts by " + category.column.replace(/_/g, " ") + " " + where + " as a bar chart");
     }
     if (date) questions.push("Make a line graph of record counts over " + date + " " + where);
-    else if (metric) questions.push("Make a line graph of record counts by " + metric.column + " " + where);
+    else if (metric) questions.push("Make a bar chart of record counts by " + metric.column + " " + where);
     if (metric && category) {
       questions.push("Compare average " + metric.column + " by " + category.column + " " + where);
     }
@@ -122,8 +122,8 @@ export function verifiedChoices(profile: ProjectProfile, question: string, max =
       }
       if (values.length >= 2) {
         choices.push({ score, option: {
-          label: table.name + " · " + facet.column + " value distribution",
-          query: "Make a line graph of record counts ordered by numeric " + facet.column + " in public." + table.name,
+          label: table.name + " · " + facet.column + " frequency distribution",
+          query: "Make a bar chart of record counts grouped by numeric " + facet.column + " in public." + table.name,
         }});
       }
     }
@@ -156,7 +156,7 @@ export function isChartOnlyRequest(question: string): boolean {
 }
 function tableForChart(tables: TableProfile[], kind: ChartKind): TableProfile | null {
   if (["pie", "donut", "radar"].includes(kind)) return tables.find(t => t.categories.some(f => f.values.length > 1)) || null;
-  if (["line", "area"].includes(kind)) return tables.find(t => t.dates.length || t.numeric.some(n=>n.observed.length > 1)) || null;
+  if (["line", "area"].includes(kind)) return tables.find(t => t.dates.length > 0) || null;
   return tables.find(t => t.categories.length || t.numeric.length) || null;
 }
 export function chartQueryFor(kind: ChartKind, profile: ProjectProfile): ChartQuery | null {
