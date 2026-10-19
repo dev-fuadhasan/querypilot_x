@@ -1,6 +1,6 @@
 import "server-only";
 import { Client } from "pg";
-import { parse } from "pgsql-ast-parser";
+import { normalizeAndGuardSql } from "./sql-guard";
 
 export type ColumnInfo = { name: string; type: string; examples?: string[] };
 export type TableInfo = { name: string; columns: ColumnInfo[] };
@@ -73,20 +73,7 @@ export async function getSchema(url: string): Promise<TableInfo[]> {
   });
 }
 export function guardSql(text: string): string {
-  const sql = text.trim().replace(/;\s*$/, "");
-  if (!sql || sql.length > 8000) throw new Error("The generated SQL is not valid.");
-  if (/;|--|\/\*|\*\//.test(sql)) throw new Error("SQL comments and multiple statements are not allowed.");
-  if (!/^\s*(select|with)\b/i.test(sql)) throw new Error("Only read-only SELECT queries can run.");
-  if (/\b(insert|update|delete|drop|create|alter|truncate|grant|revoke|execute|call|copy|vacuum|analyze|set|reset|show|lock|into|merge|pg_sleep|dblink|lo_export|pg_read_file|pg_ls_dir)\b/i.test(sql)) {
-    throw new Error("The generated query contains an unsupported operation.");
-  }
-  if (/\b(pg_catalog|information_schema|auth|storage|vault|extensions|realtime|graphql|supabase_functions)\s*\./i.test(sql)) {
-    throw new Error("Only the approved public schema can be queried.");
-  }
-  let parsed: ReturnType<typeof parse>;
-  try { parsed = parse(sql); } catch { throw new Error("The AI generated SQL that PostgreSQL could not parse."); }
-  if (parsed.length !== 1 || parsed[0]?.type !== "select") throw new Error("Only a single SELECT is permitted.");
-  return sql;
+  return normalizeAndGuardSql(text);
 }
 export async function executeQuery(url: string, sql: string): Promise<DataResult> {
   const approved = guardSql(sql);

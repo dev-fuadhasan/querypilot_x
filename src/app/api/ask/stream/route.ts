@@ -9,6 +9,8 @@ import { findExactNumericFilter, numericStatsSql, rangeCountsSql, rangeDefinitio
 import { inspectProject, isChartOnlyRequest, chartQueryFor, verifiedChoices } from "@/lib/intelligence";
 import { requestedChartTypes } from "@/lib/charts";
 import type { ChartKind } from "@/lib/charts";
+import { SqlValidationError } from "@/lib/sql-guard";
+import { recognizeEntityTrend, recognizeTopRanking, temporalTrendQuery, pivotTemporalTrend, missingTrendChoices, topRankingSql } from "@/lib/trend";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -69,6 +71,49 @@ export async function POST(request: NextRequest) {
           if (active.mode === "oauth") return managementReadOnly(active, sql);
           return (await executeQuery(active.dbUrl || "", sql)).rows;
         });
+        // Deterministic preflight for comparative rankings and true historical trends.
+        // Never manufacture five timeseries out of five snapshot rating values.
+        const trendIntent = recognizeEntityTrend(question, schema);
+        if (trendIntent) {
+          const sendMissingHistory = (reason: "no-date" | "insufficient-data") => {
+            const answer = missingTrendChoices(trendIntent, reason);
+            send({type:"clarification",...answer,originalQuestion:question,
+              example: answer.optionQueries[0]});
+          };
+          const temporalSql = temporalTrendQuery(trendIntent, schema);
+          if (!temporalSql) { sendMissingHistory("no-date"); return; }
+          send({type:"stage",stage:"planning",detail:"Verifying actual historical measurements for each ranked entity"});
+          const sql = guardSql(temporalSql);
+          enforceTables(sql,schema);
+          const longData = active.mode === "oauth" ? await executeOAuthQuery(active,sql)
+            : await executeQuery(active.dbUrl || "",sql);
+          const pivoted = pivotTemporalTrend(longData);
+          if (!pivoted) { sendMissingHistory("insufficient-data"); return; }
+          const panel = {kind:"line" as const,
+            title:"Historical " + trendIntent.metric.replace(/_/g," ") + " trend for top " + trendIntent.top + " entities",
+            data:pivoted.data,sql,xKey:pivoted.xKey,yKeys:pivoted.yKeys};
+          const report = await explainResult(question,sql,pivoted.data);
+          send({type:"result",data:pivoted.data,report,sql,panels:[panel]});
+          return;
+        }
+        const rankIntent = recognizeTopRanking(question, schema);
+        if (rankIntent) {
+          const generated = topRankingSql(rankIntent,schema);
+          if (generated) {
+            const sql = guardSql(generated);
+            enforceTables(sql,schema);
+            send({type:"stage",stage:"executing",detail:"Ranking matching entities with real numeric measurements",sql});
+            const data = active.mode === "oauth" ? await executeOAuthQuery(active,sql)
+              : await executeQuery(active.dbUrl || "",sql);
+            const chartType = /\b(line|trend)\b/i.test(question) ? "line" as const : "bar" as const;
+            const report = await explainResult(question,sql,data);
+            const panels = data.rows.length > 0 ? [{
+              kind:chartType,title:"Top " + rankIntent.top + " by " + rankIntent.metric.replace(/_/g," "),
+              data,sql,xKey:"entity",yKeys:["metric_value"]}] : [];
+            send({type:"result",data,report,sql,panels});
+            return;
+          }
+        }
         const effectiveQuestion = question.startsWith("CUSTOM CLARIFICATION:")
           ? question.split("\nPRIOR REQUEST FOR CONTEXT:")[0] : question;
         const exact = findExactNumericFilter(effectiveQuestion, schema);
@@ -162,25 +207,30 @@ export async function POST(request: NextRequest) {
             originalQuestion: question });
           return;
         }
-        let sql = guardSql(planned.sql || "");
-        enforceTables(sql, schema);
+        let candidateSql = planned.sql || "";
+        let sql = "";
         let data: Awaited<ReturnType<typeof executeQuery>> | undefined;
-        let repaired = false;
         for (let attempt = 0; attempt < 2; attempt++) {
-          send({ type: "stage", stage: "validated", detail: repaired ? "Validating corrected SQL against the approved schema" : "Validating SELECT-only SQL against the approved schema", sql });
-          send({ type: "stage", stage: "executing", detail: repaired ? "Retrying SQL execution against Supabase" : "Executing against your Supabase database", sql });
           try {
+            sql = guardSql(candidateSql);
+            enforceTables(sql, schema);
+            send({ type: "stage", stage: "validated", detail: attempt ? "Corrected SQL validated" : "SQL validated against the approved schema", sql });
+            send({ type: "stage", stage: "executing", detail: attempt ? "Retrying corrected read-only SQL" : "Executing read-only SQL", sql });
             data = active.mode === "oauth" ? await executeOAuthQuery(active, sql) : await executeQuery(active.dbUrl || "", sql);
             break;
           } catch (error) {
-            if (attempt !== 0 || !(error instanceof SupabaseQueryError) || !error.repairable) {
+            const canRepair = error instanceof SqlValidationError ||
+              (error instanceof SupabaseQueryError && error.repairable) ||
+              (error instanceof Error && /unapproved table|column .* does not exist|relation .* does not exist|syntax error|operator does not exist|invalid input syntax/i.test(error.message));
+            if (attempt > 0 || !canRepair) {
+              if (error instanceof SqlValidationError && attempt > 0)
+                throw new Error("The AI generated invalid SQL twice. Nothing unsafe was executed. Please specify the intended fields or table.");
               throw error;
             }
-            repaired = true;
-            send({ type: "stage", stage: "planning", detail: "Supabase rejected the SQL. Generating one safe correction" });
-            const proposed = await repairQuestion(question, sql, error.message, schema);
-            sql = guardSql(proposed);
-            enforceTables(sql, schema);
+            send({ type: "stage", stage: "planning", detail: "SQL needs correction; requesting one safer SELECT query" });
+            const category = error instanceof SqlValidationError ? "Read-only SQL syntax or statement formatting"
+              : error instanceof SupabaseQueryError ? error.message : "An approved database column or SQL expression was rejected";
+            candidateSql = await repairQuestion(question, candidateSql, category, schema);
           }
         }
         if (!data) throw new Error("Database query did not return a result.");

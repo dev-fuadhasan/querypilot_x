@@ -138,7 +138,7 @@ function HeatmapView({ data, view }: { data: DataResult; view: ChartSpec }) {
 }
 function ChartView({ answer, view }: { answer: Answer; view: ChartSpec }) {
   const { data } = answer;
-  const yKeys = view.yKeys.filter(key => data.columns.some(column => column.name === key)).slice(0, 4);
+  const yKeys = view.yKeys.filter(key => data.columns.some(column => column.name === key)).slice(0, view.type === "line" || view.type === "area" ? 10 : 4);
   const xKey = view.xKey;
   if (!data.columns.some(col => col.name === xKey) || !yKeys.length || !data.rows.length) return null;
   const kind = view.type;
@@ -211,7 +211,7 @@ function ChartView({ answer, view }: { answer: Answer; view: ChartSpec }) {
               <Tooltip formatter={value => valueText(value)}/>
               {yKeys.length > 1 && <Legend/>}
               {yKeys.map((key,i) => <Area key={key} type="monotone" dataKey={key}
-                stroke={COLORS[i]} fill={COLORS[i]} fillOpacity={0.12} strokeWidth={2.4}/>)}
+                stroke={COLORS[i % COLORS.length]} fill={COLORS[i % COLORS.length]} fillOpacity={0.12} strokeWidth={2.4}/>)}
             </AreaChart>
           ) : kind === "line" ? (
             <LineChart data={normalized} margin={{ top: 10, right: 18, left: 0, bottom: 7 }}>
@@ -220,9 +220,9 @@ function ChartView({ answer, view }: { answer: Answer; view: ChartSpec }) {
                 tickFormatter={v => String(v).slice(0, 12)}/>
               <YAxis tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false} width={55}/>
               <Tooltip formatter={value => valueText(value)}/>
-              {yKeys.length > 1 && <Legend/>}
+              {yKeys.length > 1 && <Legend wrapperStyle={{fontSize:10,whiteSpace:"normal"}}/>}
               {yKeys.map((key,i) => <Line key={key} type="monotone" dataKey={key}
-                stroke={COLORS[i]} strokeWidth={2.6} dot={{ r: 2.5 }} activeDot={{ r: 4.5 }}/>)}
+                stroke={COLORS[i % COLORS.length]} strokeWidth={2.6} dot={{ r: 2.5 }} activeDot={{ r: 4.5 }}/>)}
             </LineChart>
           ) : kind === "combo" ? (
             <ComposedChart data={normalized} margin={{ top: 10, right: 18, left: 0, bottom: 7 }}>
