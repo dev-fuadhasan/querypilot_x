@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { initialProjectRef, resolveStartupPhase } from "@/lib/connection-flow";
 import { requestedChartTypes } from "@/lib/charts";
 import { prepareHorizontalBars, rateHighlights } from "@/lib/visualization-data";
+import { formatDisplayValue } from "@/lib/format-values";
 import type { ChartSpec } from "@/lib/charts";
 import {
   ArrowRight, ArrowUpRight, BarChart3, Check, CheckCircle2, ChevronDown,
@@ -27,7 +28,7 @@ type SessionStatus = {
   mode?: "oauth" | "postgres" | null;
   aiProvider?: "gemini" | "groq" | null;
 };
-type Column = { name: string; type: "number" | "date" | "text" };
+type Column = { name: string; type: "number" | "date" | "text"; numericKind?: "integer" | "decimal" };
 type DataResult = { columns: Column[]; rows: Record<string, unknown>[]; truncated: boolean };
 type Report = {
   title: string;
@@ -77,12 +78,8 @@ function Brand({ small = false }: { small?: boolean }) {
     </div>
   );
 }
-function valueText(value: unknown): string {
-  if (value === null || value === undefined) return "—";
-  if (typeof value === "number") return Number.isFinite(value) ? new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value) : "—";
-  if (typeof value === "string" && /^-?\d+(\.\d+)?$/.test(value) && value.length < 18) return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(Number(value));
-  if (typeof value === "object") return JSON.stringify(value);
-  return String(value);
+function valueText(value: unknown, column?: Column): string {
+  return formatDisplayValue(value, column);
 }
 function prettyLabel(name: string) { return name.replace(/_/g, " ").replace(/\b\w/g, (a) => a.toUpperCase()); }
 function chartValue(value: unknown) {
@@ -95,7 +92,7 @@ function DataTable({ data }: { data: DataResult }) {
       <table className="data-table">
         <thead><tr><th className="row-index">#</th>{data.columns.map((col) => <th key={col.name}>{prettyLabel(col.name)}</th>)}</tr></thead>
         <tbody>{data.rows.map((row, index) => (
-          <tr key={index}><td className="row-index">{index + 1}</td>{data.columns.map((col) => <td key={col.name} title={valueText(row[col.name])}>{valueText(row[col.name])}</td>)}</tr>
+          <tr key={index}><td className="row-index">{index + 1}</td>{data.columns.map((col) => <td key={col.name} title={valueText(row[col.name], col)}>{valueText(row[col.name], col)}</td>)}</tr>
         ))}</tbody>
       </table>
     </div>
@@ -107,6 +104,7 @@ function chartNumber(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 function HeatmapView({ data, view }: { data: DataResult; view: ChartSpec }) {
+  const categoryColumn = data.columns.find(col => col.name === view.xKey);
   const rows = data.rows.slice(0, 22);
   const columns = view.yKeys.slice(0, 5);
   const valid = rows.flatMap(row => columns.map(key => chartNumber(row[key])).filter((v): v is number => v !== null));
@@ -120,15 +118,16 @@ function HeatmapView({ data, view }: { data: DataResult; view: ChartSpec }) {
       {rows.map((row, index) => (
         <div className="heatmap-row" role="row" key={index}
           style={{ gridTemplateColumns: "minmax(120px,1.5fr) repeat(" + columns.length + ",minmax(68px,1fr))" }}>
-          <span className="heatmap-row-label" title={valueText(row[view.xKey])}>{valueText(row[view.xKey])}</span>
+          <span className="heatmap-row-label" title={valueText(row[view.xKey], categoryColumn)}>{valueText(row[view.xKey], categoryColumn)}</span>
           {columns.map(key => {
             const n = chartNumber(row[key]);
+            const metricColumn = data.columns.find(col => col.name === key);
             const strength = n === null ? 0 : max === min ? 0.5 : (n - min) / (max - min);
             return <span className="heatmap-cell" key={key}
-              title={prettyLabel(key) + ": " + (n === null ? "No value" : valueText(n))}
+              title={prettyLabel(key) + ": " + (n === null ? "No value" : valueText(row[key], metricColumn))}
               style={{ background: n === null ? "#f3f4f6" : "rgba(53,119,197," + (0.1 + strength * 0.7).toFixed(3) + ")",
                 color: strength > .62 ? "#fff" : "#24354a" }}>
-              {n === null ? "—" : valueText(n)}
+              {n === null ? "—" : valueText(row[key], metricColumn)}
             </span>;
           })}
         </div>
@@ -216,6 +215,10 @@ function ChartView({ answer, view }: { answer: Answer; view: ChartSpec }) {
   const xKey = view.xKey;
   if (!data.columns.some(col => col.name === xKey) || !yKeys.length || !data.rows.length) return null;
   const kind = view.type;
+  const categoryColumn = data.columns.find(col => col.name === xKey);
+  const metricColumn = data.columns.find(col => col.name === yKeys[0]);
+  const tooltipValue = (value: unknown, name: unknown) =>
+    valueText(value, data.columns.find(col => col.name === String(name)) || metricColumn);
   const premiumBars = prepareHorizontalBars(data, view);
   if (premiumBars) return <InsightHorizontalBarChart data={data} view={view}/>;
   if (kind === "card") {
@@ -225,8 +228,8 @@ function ChartView({ answer, view }: { answer: Answer; view: ChartSpec }) {
       <div className="chart-card-grid">
         {rows.flatMap((row, index) => (data.rows.length === 1 ? yKeys : yKeys.slice(0, 1)).map(key => (
           <div className="chart-stat" key={index + ":" + key}>
-            <span className="chart-stat-label">{data.rows.length > 1 ? valueText(row[xKey]) : prettyLabel(key)}</span>
-            <strong>{valueText(row[key])}</strong>
+            <span className="chart-stat-label">{data.rows.length > 1 ? valueText(row[xKey], categoryColumn) : prettyLabel(key)}</span>
+            <strong>{valueText(row[key], data.columns.find(col => col.name === key))}</strong>
             {data.rows.length > 1 && <small>{prettyLabel(key)} · Row {index + 1}</small>}
           </div>
         )))}
@@ -253,7 +256,7 @@ function ChartView({ answer, view }: { answer: Answer; view: ChartSpec }) {
         <ResponsiveContainer width="100%" height="100%">
           {kind === "pie" || kind === "donut" ? (
             <PieChart>
-              <Tooltip formatter={value => valueText(value)}/>
+              <Tooltip formatter={(value, name) => tooltipValue(value, name)}/>
               <Legend verticalAlign="bottom"/>
               <Pie data={normalized} dataKey={yKeys[0]} nameKey={xKey} cx="50%" cy="44%" outerRadius="74%"
                 innerRadius={kind === "donut" ? "49%" : 0} paddingAngle={kind === "donut" ? 2 : 0}>
@@ -263,17 +266,17 @@ function ChartView({ answer, view }: { answer: Answer; view: ChartSpec }) {
           ) : kind === "scatter" ? (
             <ScatterChart margin={{ top: 12, right: 25, left: 4, bottom: 10 }}>
               <CartesianGrid stroke="#edf0f2"/>
-              <XAxis type="number" dataKey={xKey} name={prettyLabel(xKey)} tick={{ fill: "#90949c", fontSize: 10 }}/>
-              <YAxis type="number" dataKey={yKeys[0]} name={prettyLabel(yKeys[0])} tick={{ fill: "#90949c", fontSize: 10 }}/>
-              <Tooltip cursor={{ strokeDasharray: "3 3" }}/>
+              <XAxis type="number" dataKey={xKey} name={prettyLabel(xKey)} tick={{ fill: "#90949c", fontSize: 10 }} tickFormatter={v => valueText(v, categoryColumn)}/>
+              <YAxis type="number" dataKey={yKeys[0]} name={prettyLabel(yKeys[0])} tick={{ fill: "#90949c", fontSize: 10 }} tickFormatter={v => valueText(v, metricColumn)}/>
+              <Tooltip cursor={{ strokeDasharray: "3 3" }} formatter={(value, name) => tooltipValue(value, name)}/>
               <Scatter data={normalized} fill={COLORS[0]} name={prettyLabel(yKeys[0])}/>
             </ScatterChart>
           ) : kind === "radar" ? (
             <RadarChart data={normalized.slice(0, 14)} outerRadius="66%">
               <PolarGrid stroke="#e8ebf0"/>
               <PolarAngleAxis dataKey={xKey} tick={{ fill: "#818892", fontSize: 10 }}/>
-              <PolarRadiusAxis tick={{ fill: "#9ca3af", fontSize: 9 }}/>
-              <Tooltip formatter={value => valueText(value)}/>
+              <PolarRadiusAxis tick={{ fill: "#9ca3af", fontSize: 9 }} tickFormatter={v => valueText(v, metricColumn)}/>
+              <Tooltip formatter={(value, name) => tooltipValue(value, name)}/>
               {yKeys.length > 1 && <Legend/>}
               {yKeys.map((key, i) => <Radar key={key} name={prettyLabel(key)} dataKey={key}
                 stroke={COLORS[i]} fill={COLORS[i]} fillOpacity={0.14}/>)}
@@ -282,9 +285,9 @@ function ChartView({ answer, view }: { answer: Answer; view: ChartSpec }) {
             <AreaChart data={normalized} margin={{ top: 10, right: 18, left: 0, bottom: 7 }}>
               <CartesianGrid stroke="#edf0f2" vertical={false}/>
               <XAxis dataKey={xKey} tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false} minTickGap={25}
-                tickFormatter={v => String(v).slice(0, 12)}/>
-              <YAxis tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false} width={55}/>
-              <Tooltip formatter={value => valueText(value)}/>
+                tickFormatter={v => valueText(v, categoryColumn).slice(0, 12)}/>
+              <YAxis tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false} width={55} tickFormatter={v => valueText(v, metricColumn)}/>
+              <Tooltip formatter={(value, name) => tooltipValue(value, name)}/>
               {yKeys.length > 1 && <Legend/>}
               {yKeys.map((key,i) => <Area key={key} type="monotone" dataKey={key}
                 stroke={COLORS[i % COLORS.length]} fill={COLORS[i % COLORS.length]} fillOpacity={0.12} strokeWidth={2.4}/>)}
@@ -293,9 +296,9 @@ function ChartView({ answer, view }: { answer: Answer; view: ChartSpec }) {
             <LineChart data={normalized} margin={{ top: 10, right: 18, left: 0, bottom: 7 }}>
               <CartesianGrid stroke="#edf0f2" vertical={false}/>
               <XAxis dataKey={xKey} tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false} minTickGap={25}
-                tickFormatter={v => String(v).slice(0, 12)}/>
-              <YAxis tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false} width={55}/>
-              <Tooltip formatter={value => valueText(value)}/>
+                tickFormatter={v => valueText(v, categoryColumn).slice(0, 12)}/>
+              <YAxis tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false} width={55} tickFormatter={v => valueText(v, metricColumn)}/>
+              <Tooltip formatter={(value, name) => tooltipValue(value, name)}/>
               {yKeys.length > 1 && <Legend wrapperStyle={{fontSize:10,whiteSpace:"normal"}}/>}
               {yKeys.map((key,i) => <Line key={key} type="monotone" dataKey={key}
                 stroke={COLORS[i % COLORS.length]} strokeWidth={2.6} dot={{ r: 2.5 }} activeDot={{ r: 4.5 }}/>)}
@@ -304,9 +307,9 @@ function ChartView({ answer, view }: { answer: Answer; view: ChartSpec }) {
             <ComposedChart data={normalized} margin={{ top: 10, right: 18, left: 0, bottom: 7 }}>
               <CartesianGrid stroke="#edf0f2" vertical={false}/>
               <XAxis dataKey={xKey} tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false}
-                tickFormatter={v => String(v).slice(0, 12)}/>
-              <YAxis tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false} width={55}/>
-              <Tooltip formatter={value => valueText(value)}/><Legend/>
+                tickFormatter={v => valueText(v, categoryColumn).slice(0, 12)}/>
+              <YAxis tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false} width={55} tickFormatter={v => valueText(v, metricColumn)}/>
+              <Tooltip formatter={(value, name) => tooltipValue(value, name)}/><Legend/>
               <Bar dataKey={yKeys[0]} fill={COLORS[0]} radius={[4,4,0,0]} maxBarSize={46}/>
               <Line type="monotone" dataKey={yKeys[1]} stroke={COLORS[1]} strokeWidth={2.4}/>
             </ComposedChart>
@@ -316,18 +319,18 @@ function ChartView({ answer, view }: { answer: Answer; view: ChartSpec }) {
               <CartesianGrid stroke="#edf0f2" vertical={!isBar} horizontal={isBar}/>
               {isBar ? (
                 <>
-                  <XAxis type="number" tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false}/>
+                  <XAxis type="number" tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={v => valueText(v, metricColumn)}/>
                   <YAxis type="category" dataKey={xKey} width={110} tick={{ fill: "#90949c", fontSize: 10 }}
-                    tickFormatter={v => String(v).slice(0, 17)}/>
+                    tickFormatter={v => valueText(v, categoryColumn).slice(0, 17)}/>
                 </>
               ) : (
                 <>
                   <XAxis type="category" dataKey={xKey} tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false}
-                    axisLine={false} tickFormatter={v => String(v).slice(0, 13)}/>
+                    axisLine={false} tickFormatter={v => valueText(v, categoryColumn).slice(0, 13)}/>
                   <YAxis type="number" tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false} width={55}/>
                 </>
               )}
-              <Tooltip formatter={value => valueText(value)}/>
+              <Tooltip formatter={(value, name) => tooltipValue(value, name)}/>
               {yKeys.length > 1 && <Legend/>}
               {yKeys.map((key,i) => <Bar key={key} dataKey={key} fill={COLORS[i]}
                 stackId={kind === "stacked-column" ? "stack" : undefined}
