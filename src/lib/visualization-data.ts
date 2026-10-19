@@ -1,5 +1,5 @@
 import type { ChartSpec } from "./charts";
-import { formatDisplayValue } from "./format-values";
+import { formatDisplayValue } from "./format-values.ts";
 
 type Column = { name: string; type: "number" | "date" | "text"; numericKind?: "integer" | "decimal" };
 type ResultData = { columns: Column[]; rows: Record<string, unknown>[] };
