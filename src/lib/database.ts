@@ -5,7 +5,7 @@ import { normalizeAndGuardSql } from "./sql-guard";
 export type ColumnInfo = { name: string; type: string; examples?: string[] };
 export type TableInfo = { name: string; columns: ColumnInfo[] };
 export type DataResult = {
-  columns: { name: string; type: "number" | "date" | "text" }[];
+  columns: { name: string; type: "number" | "date" | "text"; numericKind?: "integer" | "decimal" }[];
   rows: Record<string, unknown>[];
   truncated: boolean;
 };
@@ -85,6 +85,10 @@ export async function executeQuery(url: string, sql: string): Promise<DataResult
       name: field.name,
       type: ([20, 21, 23, 700, 701, 1700].includes(field.dataTypeID)
         ? "number" : [1082, 1114, 1184].includes(field.dataTypeID) ? "date" : "text") as "number" | "date" | "text",
+      // Preserve SQL type metadata: NUMERIC(1.000...) must display as 1.00,
+      // while integer counts/IDs should stay integers in the UI.
+      numericKind: ([700, 701, 1700].includes(field.dataTypeID) ? "decimal"
+        : [20, 21, 23].includes(field.dataTypeID) ? "integer" : undefined) as "decimal" | "integer" | undefined,
     }));
     return { columns, rows, truncated: result.rows.length > 200 };
   });
