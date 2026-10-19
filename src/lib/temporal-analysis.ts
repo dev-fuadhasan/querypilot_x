@@ -12,7 +12,7 @@ const TIME_REQUEST = /\b(monthly|weekly|daily|yearly|annually|quarterly|month.by
 const RATE = /(?:^|_)(rating|score|rate|percent|percentage|ratio|average|mean|price|cost|temperature|age|discount)(?:_|$)/i;
 const QUOTED = (s: string) => '"' + s.replace(/"/g,'""') + '"';
 function words(text: string): string[] {
-  return text.toLowerCase().replace(/([a-z])([A-Z])/g, "$1 $2").split(/[^a-z0-9]+/).filter(Boolean);
+  return text.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
 }
 function normalized(text: string): string {
   return words(text).join(" ");
@@ -38,7 +38,7 @@ function metricScore(q:string, name:string):number {
   return 0;
 }
 function metricChoice(question:string, table:TableInfo) {
-  const choices = table.columns.filter(c=>NUMERIC.test(c.type) && !/(^id$|_id$|postal|zip|phone)/i.test(c.name))
+  const choices = table.columns.filter(c=>NUMERIC.test(c.type) && !DATE_TYPE.test(c.type) && !DATE_NAME.test(c.name) && !/(^id$|_id$|postal|zip|phone)/i.test(c.name))
     .map(c=>({col:c,score:metricScore(question,c.name)}))
     .filter(c=>c.score>0).sort((a,b)=>b.score-a.score);
   if(!choices.length) return {column:null,alternatives:[] as string[]};
