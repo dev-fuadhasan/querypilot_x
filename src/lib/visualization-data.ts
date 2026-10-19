@@ -1,6 +1,7 @@
 import type { ChartSpec } from "./charts";
+import { formatDisplayValue } from "./format-values";
 
-type Column = { name: string; type: "number" | "date" | "text" };
+type Column = { name: string; type: "number" | "date" | "text"; numericKind?: "integer" | "decimal" };
 type ResultData = { columns: Column[]; rows: Record<string, unknown>[] };
 export type BarRow = { label: string; value: number; percentageOfScale: number; formatted: string };
 export type BarDisplay = {
@@ -35,11 +36,13 @@ export function prepareHorizontalBars(data: ResultData, view: ChartSpec): BarDis
     !data.columns.some(col => col.name === view.xKey) ||
     !data.columns.some(col => col.name === view.yKeys[0])) return null;
   const key = view.yKeys[0];
+  const metricColumn = data.columns.find(col => col.name === key);
+  const categoryColumn = data.columns.find(col => col.name === view.xKey);
   const valid = data.rows.map(row => {
     const value = numeric(row[key]);
     const label = row[view.xKey];
     if (value === null || value < 0 || label === undefined || label === null) return null;
-    return { label: String(label), value };
+    return { label: formatDisplayValue(label, categoryColumn), value };
   }).filter((row): row is {label: string;value: number} => row !== null);
   if (!valid.length) return null;
   const largest = Math.max(...valid.map(row => row.value));
@@ -48,7 +51,7 @@ export function prepareHorizontalBars(data: ResultData, view: ChartSpec): BarDis
   const axisMaximum = isPercentage ? 100 : niceMaximum(largest);
   const visible = valid.slice(0, 20);
   const formatValue = (value: number) =>
-    new Intl.NumberFormat("en-US", { maximumFractionDigits: 2, minimumFractionDigits: isPercentage ? 2 : 0 }).format(value) +
+    formatDisplayValue(value, metricColumn) +
     (isPercentage ? "%" : "");
   return {
     rows: visible.map(row => ({
