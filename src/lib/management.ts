@@ -62,6 +62,37 @@ export async function listProjects(accessToken: string): Promise<Project[]> {
   if (!response.ok) throw new Error("Cannot list projects. Enable Projects: Read in the Supabase OAuth app.");
   return normalizeProjects(await response.json());
 }
+export class SupabaseQueryError extends Error {
+  readonly repairable: boolean;
+  readonly category: "sql" | "permission" | "connection";
+  constructor(message: string, repairable: boolean, category: "sql" | "permission" | "connection") {
+    super(message);
+    this.name = "SupabaseQueryError";
+    this.repairable = repairable;
+    this.category = category;
+  }
+}
+function describeFailure(status: number, source: unknown): SupabaseQueryError {
+  const payload = source && typeof source === "object" ? source as Record<string, unknown> : {};
+  const raw = [payload.message, payload.error, payload.details, payload.hint]
+    .filter((item): item is string => typeof item === "string").join(" ").slice(0, 1000);
+  // Never echo raw error details: they may include database values or internal identifiers.
+  if (/permission denied|insufficient privilege|row.level security|not authorized/i.test(raw) || status === 403) {
+    return new SupabaseQueryError("Supabase denied access to this table. Check the OAuth Database: Read scope and the selected project's table permissions.", false, "permission");
+  }
+  if (/invalid input syntax for type (numeric|integer|double)|could not convert|invalid digit/i.test(raw)) {
+    return new SupabaseQueryError("SQL attempted to convert formatted text into a number. QueryPilot will retry using a safer numeric conversion.", true, "sql");
+  }
+  if (/column .* does not exist|relation .* does not exist|syntax error|operator does not exist|function .* does not exist/i.test(raw)) {
+    return new SupabaseQueryError("Supabase rejected a generated SQL expression or identifier. QueryPilot will try a corrected query.", true, "sql");
+  }
+  return new SupabaseQueryError(
+    "Supabase read-only query failed (HTTP " + status + "). QueryPilot will retry if the SQL is repairable; an unavailable beta endpoint or database restrictions may also cause this.",
+    status === 400 || status >= 500,
+    status === 400 || status >= 500 ? "sql" : "connection"
+  );
+}
+
 export async function managementReadOnly(session: Session, query: string): Promise<Record<string, unknown>[]> {
   if (!session.projectRef || !session.accessToken || session.mode !== "oauth")
     throw new Error("Select a connected Supabase project.");
@@ -80,7 +111,11 @@ export async function managementReadOnly(session: Session, query: string): Promi
   if (response.status === 403) throw new Error("Supabase denied read-only database access. Enable Database: Read in OAuth app permissions.");
   if (response.status === 404) throw new Error("The Supabase read-only query endpoint is unavailable for this project. Use manual read-only connection.");
   if (response.status === 429) throw new Error("Supabase has temporarily rate-limited queries. Try again shortly.");
-  if (!response.ok) throw new Error("Supabase could not execute this read-only query. Check database permissions or try manual connection.");
+  if (!response.ok) {
+    // Capture the provider's error category without disclosing raw DB contents in the browser.
+    const payload: unknown = await response.json().catch(() => ({}));
+    throw describeFailure(response.status, payload);
+  }
   const value: unknown = await response.json();
   // Management API versions may return rows as a bare list or inside a result object.
   let rows: unknown = value;

@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { executeQuery, getSchema, guardSql } from "@/lib/database";
-import { executeOAuthQuery, ensureOAuthSession, getOAuthSchema } from "@/lib/management";
+import { executeOAuthQuery, ensureOAuthSession, getOAuthSchema, managementReadOnly, SupabaseQueryError } from "@/lib/management";
 import { readSession, saveSession, verifySameOrigin } from "@/lib/session";
-import { explainResult, planQuestion } from "@/lib/ai";
+import { explainResult, planQuestion, repairQuestion } from "@/lib/ai";
+import { enrichSchemaWithExamples } from "@/lib/profiles";
 import type { TableInfo } from "@/lib/database";
 
 export const runtime = "nodejs";
@@ -56,19 +57,40 @@ export async function POST(request: NextRequest) {
       };
       try {
         send({ type: "stage", stage: "schema", detail: "Inspecting approved database tables and columns" });
-        const schema = active.mode === "oauth" ? await getOAuthSchema(active) : await getSchema(active.dbUrl || "");
-        if (!schema.length) throw new Error("No readable public tables were found in the connected project.");
+        const discovered = active.mode === "oauth" ? await getOAuthSchema(active) : await getSchema(active.dbUrl || "");
+        if (!discovered.length) throw new Error("No readable public tables were found in the connected project.");
+        const schema = await enrichSchemaWithExamples(discovered, async (sql) => {
+          if (active.mode === "oauth") return managementReadOnly(active, sql);
+          return (await executeQuery(active.dbUrl || "", sql)).rows;
+        });
         send({ type: "stage", stage: "planning", detail: "Understanding your question and generating PostgreSQL" });
         const planned = await planQuestion(question, schema);
         if (planned.action === "clarify") {
           send({ type: "clarification", question: planned.question || "Could you clarify?", options: planned.options || [], originalQuestion: question });
           return;
         }
-        const sql = guardSql(planned.sql || "");
+        let sql = guardSql(planned.sql || "");
         enforceTables(sql, schema);
-        send({ type: "stage", stage: "validated", detail: "SELECT-only SQL syntax and table references validated", sql });
-        send({ type: "stage", stage: "executing", detail: "Executing against your Supabase database", sql });
-        const data = active.mode === "oauth" ? await executeOAuthQuery(active, sql) : await executeQuery(active.dbUrl || "", sql);
+        let data: Awaited<ReturnType<typeof executeQuery>> | undefined;
+        let repaired = false;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          send({ type: "stage", stage: "validated", detail: repaired ? "Validating corrected SQL against the approved schema" : "Validating SELECT-only SQL against the approved schema", sql });
+          send({ type: "stage", stage: "executing", detail: repaired ? "Retrying SQL execution against Supabase" : "Executing against your Supabase database", sql });
+          try {
+            data = active.mode === "oauth" ? await executeOAuthQuery(active, sql) : await executeQuery(active.dbUrl || "", sql);
+            break;
+          } catch (error) {
+            if (attempt !== 0 || !(error instanceof SupabaseQueryError) || !error.repairable) {
+              throw error;
+            }
+            repaired = true;
+            send({ type: "stage", stage: "planning", detail: "Supabase rejected the SQL. Generating one safe correction" });
+            const proposed = await repairQuestion(question, sql, error.message, schema);
+            sql = guardSql(proposed);
+            enforceTables(sql, schema);
+          }
+        }
+        if (!data) throw new Error("Database query did not return a result.");
         send({ type: "stage", stage: "report", detail: "Building visuals and checking evidence for the analysis report", sql });
         const report = await explainResult(question, sql, data);
         send({ type: "result", data, report, sql });

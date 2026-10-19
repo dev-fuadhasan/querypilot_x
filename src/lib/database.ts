@@ -2,7 +2,7 @@ import "server-only";
 import { Client } from "pg";
 import { parse } from "pgsql-ast-parser";
 
-export type ColumnInfo = { name: string; type: string };
+export type ColumnInfo = { name: string; type: string; examples?: string[] };
 export type TableInfo = { name: string; columns: ColumnInfo[] };
 export type DataResult = {
   columns: { name: string; type: "number" | "date" | "text" }[];

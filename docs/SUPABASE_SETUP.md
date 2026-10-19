@@ -98,3 +98,27 @@ Current Part 1 is **read-only**. Scheduled reports (cron), audit triggers for da
 ## 6. Verification
 
 GitHub Actions runs a TypeScript type check and a Next.js production build on each push. Actual model responses, OAuth consent and live Supabase queries can be integration-tested only when you supply your own OAuth app/key and project.
+
+
+## Troubleshooting: ranked product prices and SQL execution errors
+
+If a question such as "Top 5 highest price products?" fails:
+
+1. Confirm that the OAuth app has Projects: Read and Database: Read.
+2. QueryPilot now samples numeric-looking text columns (without sending product names or personal records to the AI). Formatted prices such as ₹1,39,900 require numeric normalization before sorting.
+3. When Supabase rejects a repairable generated query, QueryPilot attempts one corrected SQL query automatically. The execution animation shows this retry.
+4. Errors are classified into permissions, numeric-format problems, or other rejected SQL when possible, without exposing raw database error contents.
+5. Supabase's read-only Management API remains beta. A manual read-only PostgreSQL connection is still available for unsupported projects.
+
+Illustrative SQL for a table with product_name and actual_price stored as text:
+
+~~~sql
+SELECT product_name, actual_price,
+       NULLIF(regexp_replace(actual_price, '[^0-9.]', '', 'g'), '')::numeric AS numeric_price
+FROM public.sales_data
+WHERE NULLIF(regexp_replace(actual_price, '[^0-9.]', '', 'g'), '') IS NOT NULL
+ORDER BY numeric_price DESC
+LIMIT 5;
+~~~
+
+This is a demonstration query for that dataset; QueryPilot does not hardcode the sales_data table. Schema discovery and SQL planning remain dynamic for other users' Supabase projects. The app never modifies database column types or writes to repair price formatting.

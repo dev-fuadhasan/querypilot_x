@@ -16,6 +16,8 @@ jobs:
           cache-dependency-path: package.json
       - name: Install dependencies
         run: npm install --no-audit --no-fund
+      - name: Numeric text SQL smoke test
+        run: node tests/sql-smoke.cjs
       - name: Type-check
         run: npm run typecheck
       - name: Production build
