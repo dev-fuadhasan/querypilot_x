@@ -260,7 +260,14 @@ function ChartView({ answer, view }: { answer: Answer; view: ChartSpec }) {
     </section>
   );
   if (data.rows.length < 2) return null;
-  const normalized = data.rows.slice(0, kind === "pie" || kind === "donut" ? 12 : 50)
+  // Sort numeric sequential axes for age/dose/distance trends. Never change
+  // the underlying query results; this only controls drawing order.
+  const orderedRows = (kind === "line" || kind === "area") &&
+    data.rows.length > 1 &&
+    data.rows.every(row => chartNumber(row[xKey]) !== null)
+      ? [...data.rows].sort((a, b) => Number(a[xKey]) - Number(b[xKey]))
+      : data.rows;
+  const normalized = orderedRows.slice(0, kind === "pie" || kind === "donut" ? 12 : 50)
     .map(row => ({ ...row, ...Object.fromEntries([
       ...yKeys.map(key => [key, chartNumber(row[key])]),
       ...(kind === "scatter" ? [[xKey, chartNumber(row[xKey])]] : []),
