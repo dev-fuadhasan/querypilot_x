@@ -34,10 +34,11 @@ type Report = {
   visualizations: ChartSpec[];
   suggestedQuestions: string[];
 };
-type Answer = { data: DataResult; report: Report; sql: string };
+type ChartPanel = { kind: ChartSpec["type"]; title: string; data: DataResult; sql: string; xKey: string; yKeys: string[] };
+type Answer = { data: DataResult; report: Report; sql: string; panels?: ChartPanel[]; unavailable?: string[] };
 type Message = {
   id: number; role: "user" | "assistant"; text: string;
-  options?: string[]; optionQueries?: string[]; original?: string;
+  options?: string[]; optionQueries?: string[]; original?: string; example?: string;
 };
 type AskReply =
   | { type: "stage"; stage: ProgressStage; detail: string; sql?: string }
@@ -46,7 +47,7 @@ type AskReply =
   | { type: "error"; error: string };
 type ProgressStage = "schema" | "checking" | "planning" | "validated" | "executing" | "report";
 type Progress = { stage: ProgressStage; detail: string; sql?: string };
-type Clarification = { question: string; options: string[]; optionQueries?: string[]; originalQuestion: string };
+type Clarification = { question: string; options: string[]; optionQueries?: string[]; originalQuestion: string; example?: string };
 const STAGES: { stage: ProgressStage; label: string; description: string }[] = [
   { stage: "schema", label: "Inspect database", description: "Discovering available tables" },
   { stage: "checking", label: "Validate request", description: "Checking actual dataset values" },
@@ -57,7 +58,7 @@ const STAGES: { stage: ProgressStage; label: string; description: string }[] = [
 ];
 
 const COLORS = ["#6366f1", "#059669", "#f59e0b", "#3b82f6", "#e879f9", "#f97316"];
-const EXAMPLES = ["How did sales perform last month?", "Show the top products by revenue", "Compare this month with the previous month"];
+
 
 function SupabaseMark({ size = 23 }: { size?: number }) {
   return (
@@ -265,8 +266,8 @@ function ChartView({ answer, view }: { answer: Answer; view: ChartSpec }) {
 }
 
 function ClarificationCustomInput({
-  disabled, onSubmit
-}: { disabled: boolean; onSubmit: (value: string) => void }) {
+  disabled, example, onSubmit
+}: { disabled: boolean; example?: string; onSubmit: (value: string) => void }) {
   const [custom, setCustom] = useState("");
   return (
     <form className="clarification-custom" onSubmit={event => {
@@ -280,7 +281,7 @@ function ClarificationCustomInput({
       <div className="clarification-custom-row">
         <input aria-label="Custom clarification" value={custom} maxLength={260}
           onChange={event => setCustom(event.target.value)}
-          placeholder="e.g. Show products rated 4.8 or higher" disabled={disabled}/>
+          placeholder={example ? "For example: " + example.slice(0, 95) : "Specify the table, value or desired chart"} disabled={disabled}/>
         <button type="submit" disabled={disabled || !custom.trim()}><ArrowRight size={16}/> Apply</button>
       </div>
     </form>
@@ -289,6 +290,7 @@ function ClarificationCustomInput({
 
 function AnswerCanvas({ answer, question }: { answer: Answer; question: string }) {
   const { data, report } = answer;
+  const panels = answer.panels || [];
   const charts = report.visualizations || [];
   const explicit = requestedChartTypes(question);
   return (
@@ -298,12 +300,31 @@ function AnswerCanvas({ answer, question }: { answer: Answer; question: string }
         <h1>Analysis dashboard</h1>
         <p className="answer-question">{question}</p>
       </div>
-      {charts.length > 0 && (
-        <div className={"charts-grid " + (charts.length === 1 ? "single-chart" : "")}>
+      {panels.length > 0 ? (
+        <div className="charts-grid single-chart">
+          {panels.map((panel, index) => (
+            <div className="chart-panel-block" key={panel.kind + ":" + index}>
+              <ChartView answer={{ data: panel.data, report: { ...report, visualizations: [] }, sql: panel.sql }}
+                view={{ type: panel.kind, title: panel.title, xKey: panel.xKey, yKeys: panel.yKeys }}/>
+              <details className="chart-panel-sql">
+                <summary><Database size={14}/> Executed SQL for {panel.kind} chart <ChevronDown size={14}/></summary>
+                <pre className="executed-sql">{panel.sql}</pre>
+              </details>
+            </div>
+          ))}
+        </div>
+      ) : charts.length > 0 && (
+        <div className="charts-grid single-chart">
           {charts.map((view, index) => <ChartView answer={answer} view={view} key={view.type + ":" + index}/>)}
         </div>
       )}
-      {explicit.length > 0 && charts.length === 0 && (
+      {!!answer.unavailable?.length && (
+        <div className="chart-unavailable"><CircleHelp size={17}/>
+          No compatible verified fields were found for: {answer.unavailable.join(", ")}.
+          The other charts below use actual connected data.
+        </div>
+      )}
+      {panels.length === 0 && explicit.length > 0 && charts.length === 0 && (
         <div className="chart-unavailable">
           <CircleHelp size={17}/> The returned rows don't contain the dimensions or numeric values needed for
           the requested {explicit.join(", ")} visualization. Results and executed SQL are shown below.
@@ -311,14 +332,14 @@ function AnswerCanvas({ answer, question }: { answer: Answer; question: string }
       )}
       <section className="viz-card table-section">
         <div className="viz-heading">
-          <span><Table2 size={16}/> Query results <span className="count-chip">{data.rows.length}{data.truncated ? "+" : ""} rows</span></span>
+          <span><Table2 size={16}/> {panels.length ? "First chart's query results" : "Query results"} <span className="count-chip">{data.rows.length}{data.truncated ? "+" : ""} rows</span></span>
         </div>
         {data.rows.length ? <DataTable data={data}/> : <div className="no-rows">No matching records were returned. Adjust your request or filters.</div>}
         {data.truncated && <p className="table-footnote">Preview limited to the first 200 rows.</p>}
       </section>
       <section className="viz-card sql-results-panel">
         <div className="viz-heading">
-          <span><Database size={16}/> Executed SQL</span>
+          <span><Database size={16}/> {panels.length > 1 ? "First executed SQL (each chart also has its own SQL)" : "Executed SQL"}</span>
           <span className="sql-readonly-tag"><CheckCircle2 size={12}/> READ ONLY</span>
         </div>
         <pre className="executed-sql">{answer.sql}</pre>
@@ -373,6 +394,9 @@ function nextMessage() { messageCounter += 1; return messageCounter; }
 
 export default function Home() {
   const [session, setSession] = useState<SessionStatus | null>(null);
+  const [starters, setStarters] = useState<string[]>([]);
+  const [starterLoading, setStarterLoading] = useState(false);
+  const [starterNote, setStarterNote] = useState("");
   const [phase, setPhase] = useState<"landing" | "setup" | "workspace">("landing");
   const [databaseUri, setDatabaseUri] = useState("");
   const [showUri, setShowUri] = useState(false);
@@ -418,6 +442,27 @@ export default function Home() {
     }).catch((err) => { if (active) notify(err instanceof Error ? err.message : "Could not start the application.", true); });
     return () => { active = false; };
   }, []);
+  useEffect(() => {
+    if (!session?.connected) { setStarters([]); setStarterNote(""); setStarterLoading(false); return; }
+    const controller = new AbortController();
+    setStarters([]);
+    setStarterNote("");
+    setStarterLoading(true);
+    fetch("/api/discovery", { signal: controller.signal, cache: "no-store" })
+      .then(async response => {
+        if (!response.ok) throw new Error("Cannot inspect this project's data right now.");
+        return await response.json() as { starters?: string[]; note?: string };
+      })
+      .then(data => {
+        if (!controller.signal.aborted) {
+          setStarters(Array.isArray(data.starters) ? data.starters.filter(item => typeof item === "string").slice(0, 5) : []);
+          setStarterNote(data.note || "");
+        }
+      })
+      .catch(() => { if (!controller.signal.aborted) setStarterNote("Suggested questions could not be verified. You can still ask your own."); })
+      .finally(() => { if (!controller.signal.aborted) setStarterLoading(false); });
+    return () => controller.abort();
+  }, [session?.connected, session?.projectRef, session?.mode]);
   useEffect(() => {
     const el = messagesRef.current;
     if (el) el.scrollTop = el.scrollHeight;
@@ -541,17 +586,17 @@ export default function Home() {
           setActiveClarification(item);
           setMessages((old) => [...old, {
             id: nextMessage(), role: "assistant", text: item.question,
-            options: item.options, optionQueries: item.optionQueries, original: item.originalQuestion,
+            options: item.options, optionQueries: item.optionQueries, original: item.originalQuestion, example: item.example,
           }]);
         } else if (item.type === "result") {
           finished = true;
-          setAnswer({ data: item.data, report: item.report, sql: item.sql });
+          setAnswer({ data: item.data, report: item.report, sql: item.sql, panels: item.panels, unavailable: item.unavailable });
           setProgress(null);
           setActiveClarification(null);
           setMessages((old) => [...old, {
             id: nextMessage(), role: "assistant",
-            text: item.data.rows.length ? "Your new analysis is ready. See the results and report on the left." :
-              "The query completed without matching rows. Explore its SQL and report on the left.",
+            text: item.data.rows.length ? "Your updated charts, query results and executed SQL are ready on the left." :
+              "The query returned no matching rows. Check its SQL on the left.",
           }]);
         } else if (item.type === "error") {
           throw new Error(item.error);
@@ -748,7 +793,7 @@ export default function Home() {
                           )}>{option}<ArrowRight size={15}/></button>
                         ))}
                       </div>
-                      <ClarificationCustomInput disabled={asking}
+                      <ClarificationCustomInput disabled={asking} example={activeClarification.example || starters[0]}
                         onSubmit={text => submitCustomOption(text, activeClarification.originalQuestion)}/>
                     </div>
                   </div>
@@ -777,10 +822,12 @@ export default function Home() {
               <div className="chat-online"><span className="online-indicator"/> Online</div>
             </div>
             <div className="messages-scroll" ref={messagesRef}>
-              <div className="chat-intro"><span className="chat-intro-symbol"><Sparkles size={18}/></span><h3>What would you like to know?</h3><p>Ask a question about your connected database in plain English.</p></div>
+              <div className="chat-intro"><span className="chat-intro-symbol"><Sparkles size={18}/></span><h3>What would you like to know?</h3><p>Questions below are generated from the tables and values found in your connected project.</p></div>
               {messages.length === 0 && (
-                <div className="suggestions">
-                  {EXAMPLES.map((example) => <button key={example} onClick={() => askQuestion(example)} disabled={asking}>{example}<ArrowUpRight size={15}/></button>)}
+                <div className="suggestions" aria-live="polite">
+                  {starterLoading ? <div className="starter-checking"><LoaderCircle size={15} className="spin"/> Checking available questions in this project…</div> :
+                    starters.length ? starters.map(example => <button key={example} onClick={() => askQuestion(example)} disabled={asking}>{example}<ArrowUpRight size={15}/></button>) :
+                    <div className="starter-checking">{starterNote || "No dataset-verified starter questions are available. Ask about one of your project tables."}</div>}
                 </div>
               )}
               {messages.map((message) => (
@@ -795,7 +842,7 @@ export default function Home() {
                             {option}<ArrowRight size={14}/>
                           </button>
                         )}</div>
-                        <ClarificationCustomInput disabled={asking}
+                        <ClarificationCustomInput disabled={asking} example={message.example || starters[0]}
                           onSubmit={text => submitCustomOption(text, message.original || "")}/>
                       </>
                     )}

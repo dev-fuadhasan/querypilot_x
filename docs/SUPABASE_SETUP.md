@@ -153,3 +153,15 @@ Chart selection is now determined from the user's explicit request after SQL has
 The AI continues generating safe SQL based on the connected database schema, but visualization selection uses a deterministic, schema/result-aware layer. This also eliminates a second AI narrative generation call, improving latency and reducing exposure of returned rows to external model providers.
 
 When QueryPilot asks the user to select from AI-proposed or dataset-validated alternatives, **both the chat and the left workspace** provide a text field for a custom option. Custom clarification is treated as the newer, overriding instruction; the original question is retained only for context, preventing an invalid previous exact-number filter from being reapplied during the data check.
+
+## Project-aware verified questions and chart-only requests
+
+The dashboard includes a read-only GET /api/discovery endpoint. After connecting or switching projects, it discovers public-schema tables and samples up to 100 rows from up to three tables, selecting recognized non-sensitive category, metric, and date columns. Starter questions are built from observed fields/values rather than static demonstration questions. Unsupported datasets show no verified starter suggestions instead of fabricated ones.
+
+When the SQL AI needs clarification, the displayed suggestions and custom-input example are drawn from the current project's sampled, observed values. Exact numeric filters are still checked against the full database before claiming a specific value is absent.
+
+A chart-only prompt, for example 'Make a pie and line graph', now runs separate SELECT-only queries against suitable facets in the current project, instead of sending an underspecified natural-language query to an LLM. Charts are stacked vertically, with the executed SQL available per chart. A failed/unsupported chart does not discard other successfully rendered charts. Pie distributions collect smaller categories into an Other slice so that all non-null category counts remain represented.
+
+A line graph uses a date column when available, otherwise an ordered numeric dimension such as rating. The chart title reflects the measured dimension, not an invented date trend. Without an explicit chart choice, the rendering engine prefers chronological lines, bars for long category labels, KPI cards for single-record aggregates and pies for small positive part-to-whole distributions.
+
+Profiles use bounded samples and therefore do not claim to list every distinct value in the full database. Some projects may have unrecognized columns or insufficient measures. The app continues to use the beta Supabase Management API read-only query endpoint for OAuth connections, or a manually authorized read-only PostgreSQL role. Live OAuth and production rendering must still be tested after deployment.

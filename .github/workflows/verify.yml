@@ -24,6 +24,8 @@ jobs:
         run: node --experimental-strip-types --test tests/value-check.test.mjs
       - name: Visualization intent regression tests
         run: node --experimental-strip-types --test tests/charts.test.mjs
+      - name: Project-aware discovery and chart query tests
+        run: node --experimental-strip-types --test tests/intelligence.test.mjs
       - name: Type-check
         run: npm run typecheck
       - name: Production build

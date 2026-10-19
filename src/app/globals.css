@@ -336,3 +336,18 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
  .executed-sql{padding:12px!important;font-size:10px}
  .clarification-custom-row input{font-size:12px}
 }
+
+
+/* Project-aware query suggestions; each independently executed chart is full width. */
+.charts-grid,.charts-grid.single-chart{grid-template-columns:minmax(0,1fr)!important;align-items:start}
+.chart-panel-block{width:100%;min-width:0;display:flex;flex-direction:column;gap:0}
+.chart-panel-block>.viz-card{width:100%}
+.chart-panel-sql{border:1px solid #e8eaf0;border-top:0;border-radius:0 0 12px 12px;background:#fff;margin:-5px 0 19px;overflow:hidden}
+.chart-panel-sql summary{display:flex;align-items:center;gap:9px;min-height:39px;padding:10px 17px;font-size:11px;color:#626a76;cursor:pointer}
+.chart-panel-sql summary svg:last-child{margin-left:auto}
+.chart-panel-sql summary::-webkit-details-marker{display:none}
+.chart-panel-sql[open] summary svg:last-child{transform:rotate(180deg)}
+.chart-panel-sql pre{background:#fafbfd;border-top:1px solid #eff0f3}
+.starter-checking{border:1px dashed #e1e5ea;color:#8a929e;font-size:11px;line-height:1.65;border-radius:9px;padding:15px;display:flex;align-items:center;gap:10px}
+.suggestions button{white-space:normal;overflow-wrap:anywhere}
+@media(max-width:720px){.chart-panel-sql summary{padding:9px 12px;font-size:10px}.starter-checking{padding:12px}.chart-panel-block{gap:0}}

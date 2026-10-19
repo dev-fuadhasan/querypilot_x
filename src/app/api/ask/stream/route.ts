@@ -6,13 +6,18 @@ import { explainResult, planQuestion, repairQuestion } from "@/lib/ai";
 import { enrichSchemaWithExamples } from "@/lib/profiles";
 import type { TableInfo } from "@/lib/database";
 import { findExactNumericFilter, numericStatsSql, rangeCountsSql, rangeDefinitions, buildMissingValueClarification } from "@/lib/value-check";
+import { inspectProject, isChartOnlyRequest, chartQueryFor, verifiedChoices } from "@/lib/intelligence";
+import { requestedChartTypes } from "@/lib/charts";
+import type { ChartKind } from "@/lib/charts";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 type StreamEvent =
   | { type: "stage"; stage: "schema" | "checking" | "planning" | "validated" | "executing" | "report"; detail: string; sql?: string }
-  | { type: "clarification"; question: string; options: string[]; optionQueries?: string[]; originalQuestion: string }
-  | { type: "result"; data: Awaited<ReturnType<typeof executeQuery>>; report: Awaited<ReturnType<typeof explainResult>>; sql: string }
+  | { type: "clarification"; question: string; options: string[]; optionQueries?: string[]; originalQuestion: string; example?: string }
+  | { type: "result"; data: Awaited<ReturnType<typeof executeQuery>>; report: Awaited<ReturnType<typeof explainResult>>; sql: string;
+      panels?: { kind: ChartKind; title: string; data: Awaited<ReturnType<typeof executeQuery>>; sql: string; xKey: string; yKeys: string[] }[];
+      unavailable?: string[] }
   | { type: "error"; error: string };
 
 function enforceTables(sql: string, schema: TableInfo[]) {
@@ -85,15 +90,76 @@ export async function POST(request: NextRequest) {
             const counts = bands.length ? (await check(rangeCountsSql(exact, bands)))[0] || {} : {};
             const clarification = buildMissingValueClarification(question, exact, stats, bands, counts);
             if (clarification) {
-              send({ type: "clarification", ...clarification, originalQuestion: question });
+              send({ type: "clarification", ...clarification, example: clarification.optionQueries[0], originalQuestion: question });
               return;
             }
           }
         }
+        const requestedCharts = requestedChartTypes(question);
+        const queryDb = async (sql: string) => {
+          const approved = guardSql(sql);
+          enforceTables(approved, schema);
+          return active.mode === "oauth" ? executeOAuthQuery(active, approved) : executeQuery(active.dbUrl || "", approved);
+        };
+        let profile: Awaited<ReturnType<typeof inspectProject>> | null = null;
+        const getProfile = async () => {
+          if (profile) return profile;
+          profile = await inspectProject(schema, async sql =>
+            active.mode === "oauth" ? await managementReadOnly(active, sql)
+              : (await executeQuery(active.dbUrl || "", sql)).rows
+          );
+          return profile;
+        };
+        const autoChart = requestedCharts.length > 0 && (
+          isChartOnlyRequest(question) ||
+          (/\b(?:record counts|distribution)\b/i.test(question) &&
+            (await getProfile()).starters.some(starter => starter.toLowerCase() === question.toLowerCase()))
+        );
+        if (autoChart) {
+          send({ type: "stage", stage: "planning", detail: "Choosing meaningful chart dimensions from actual project values" });
+          const project = await getProfile();
+          const panels: { kind: ChartKind; title: string; data: Awaited<ReturnType<typeof executeQuery>>; sql: string; xKey: string; yKeys: string[] }[] = [];
+          const unavailable: string[] = [];
+          for (const kind of requestedCharts.slice(0, 4)) {
+            const plan = chartQueryFor(kind, project);
+            if (!plan) { unavailable.push(kind); continue; }
+            try {
+              send({ type: "stage", stage: "executing", detail: "Querying " + plan.title + " for " + kind + " chart", sql: plan.sql });
+              const data = await queryDb(plan.sql);
+              if (data.rows.length === 0) { unavailable.push(kind); continue; }
+              panels.push({ kind, title: plan.title, sql: plan.sql, data, xKey: plan.xKey, yKeys: plan.yKeys });
+            } catch {
+              // A failed panel does not discard other independently verified visualizations.
+              unavailable.push(kind);
+            }
+          }
+          if (panels.length) {
+            const first = panels[0];
+            send({ type: "stage", stage: "report", detail: "Rendering " + panels.length + " database-backed visualizations" });
+            const report = await explainResult(question, first.sql, first.data);
+            send({ type: "result", data: first.data, sql: first.sql, report, panels, unavailable });
+            return;
+          }
+          const choices = verifiedChoices(project, question);
+          send({ type: "clarification",
+            question: "I could not build those charts from the connected project's verified fields. Choose a supported analysis, or type your preferred table and metrics.",
+            options: choices.map(choice => choice.label),
+            optionQueries: choices.map(choice => choice.query),
+            example: choices[0]?.query,
+            originalQuestion: question });
+          return;
+        }
         send({ type: "stage", stage: "planning", detail: "Understanding your question and generating PostgreSQL" });
         const planned = await planQuestion(question, schema);
         if (planned.action === "clarify") {
-          send({ type: "clarification", question: planned.question || "Could you clarify?", options: planned.options || [], originalQuestion: question });
+          const project = await getProfile();
+          const choices = verifiedChoices(project, question);
+          send({ type: "clarification",
+            question: (planned.question || "Which data would you like to analyze?") + (choices.length ? " The options below were verified against this project." : " Type the specific table or metric you want."),
+            options: choices.map(choice => choice.label),
+            optionQueries: choices.map(choice => choice.query),
+            example: choices[0]?.query,
+            originalQuestion: question });
           return;
         }
         let sql = guardSql(planned.sql || "");

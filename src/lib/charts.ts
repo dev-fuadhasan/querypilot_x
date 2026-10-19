@@ -60,9 +60,24 @@ export function buildDashboardCharts(
   const explicit = requestedChartTypes(question);
   const desired: ChartKind[] = explicit.length ? explicit : suggestions
     .map(s => s.type).filter(t => CHART_TYPES.includes(t));
-  if (!desired.length && data.rows.length > 1 && numeric.length) {
-    desired.push("column");
-    if (wantsMultipleCharts(question)) desired.push("line", "pie", "heatmap");
+  if (!desired.length && data.rows.length === 1 && numeric.length) {
+    desired.push("card");
+  } else if (!desired.length && data.rows.length > 1 && numeric.length) {
+    const dated = data.columns.some(col => col.type === "date");
+    const longLabels = categorical.length && data.rows.some(row => String(row[categorical[0]] || "").length > 24);
+    const distributions = /\b(share|proportion|distribution|composition|breakdown|part of whole)\b/i.test(question);
+    const positiveValues = categorical.length && isPositive(data, numeric[0]);
+    if (distributions && positiveValues && data.rows.length <= 6) desired.push("pie");
+    else if (dated) desired.push("line");
+    else if (!categorical.length && numeric.length >= 2) desired.push("scatter");
+    else if (longLabels || data.rows.length > 9) desired.push("bar");
+    else desired.push("column");
+    if (wantsMultipleCharts(question)) {
+      for (const kind of (dated ? ["area", "column", "heatmap"] : ["column", "heatmap", "card"]) as ChartKind[]) {
+        if (!desired.includes(kind)) desired.push(kind);
+        if (desired.length >= 4) break;
+      }
+    }
   }
   if (wantsMultipleCharts(question) && desired.length < 2 && numeric.length && data.rows.length > 1) {
     for (const kind of ["column", "line", "donut", "heatmap"] as ChartKind[]) {
