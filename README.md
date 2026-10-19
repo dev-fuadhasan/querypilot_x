@@ -1,30 +1,33 @@
 # QueryPilot X
 
-A minimal, Vercel-ready AI analytics workspace for a connected Supabase PostgreSQL database.
+**Ask your data. Get the story.** A Vercel-ready, black-and-white AI analytics workspace for **any user-authorized Supabase PostgreSQL project**.
 
-## Setup
+## Part 1
 
-1. Deploy this Next.js repository to Vercel or run locally with `npm install && npm run dev`.
-2. Add `SESSION_SECRET` (a random secret of at least 32 characters) and `OPENAI_API_KEY` to your environment.
-3. For **Connect with Supabase** OAuth, register an OAuth app in Supabase organization settings. Add `SUPABASE_OAUTH_CLIENT_ID`, `SUPABASE_OAUTH_CLIENT_SECRET`, and `APP_URL` (your exact deployed domain). Register `https://YOUR-DOMAIN/api/auth/callback` as its redirect URI.
-4. Supabase's Management OAuth does **not** disclose existing database passwords. After OAuth, select a project and paste a PostgreSQL connection string for a dedicated read-only role from Supabase's **Connect → Session pooler** dialog.
-5. Without OAuth configuration, the landing button opens a manual connection screen for your Supabase PostgreSQL connection URI.
-6. Ask natural-language questions. QueryPilot generates SELECT-only SQL, executes it inside a read-only transaction, and displays results with evidence-grounded analysis.
+- Clean landing page with one black **Connect your database** button and a Supabase icon.
+- **Dynamic Supabase OAuth**: each user authorizes their own projects; the app verifies access using Supabase's read-only Management API without requesting the existing database password. Includes a manual read-only PostgreSQL URI fallback if the beta API isn't available.
+- Each browser has a separate encrypted HttpOnly session; a user can choose/switch projects.
+- Fixed-viewport split dashboard: broad analysis canvas on the left; AI conversation on the right.
+- Real server-driven progress animation: inspect schema → generate SQL → validate SQL → execute SQL → build report, including visible validated SQL during execution.
+- Schema-aware natural-language-to-SQL with clarification options, SELECT-only validation, database results, tables/KPIs/charts and evidence-based report.
+- **Gemini free-tier AI** as the recommended provider and optional **Groq GPT-OSS 120B**, with server-side keys.
 
-## Required environment variables
+## Get started
 
-See `.env.example`. Never commit real database credentials or OpenAI keys.
+```sh
+npm install
+cp .env.example .env.local
+npm run dev
+```
 
-## Security and scope
+See **[Deployment and Supabase integration guide](docs/SUPABASE_SETUP.md)** to configure OAuth and Vercel. GitHub Actions verifies the TypeScript check and production build.
 
-This is **Part 1** of the capstone: Supabase connection, conversational exploration, clarification questions, charts, result tables and AI report. Scheduled reports and audit alerts are planned for later. There is **no write access** by design; this avoids exposing privileged database credentials or letting AI change records.
+### Minimum Vercel secrets
 
-Connection strings are encrypted in an HttpOnly, Secure cookie with AES-256-GCM. Vercel functions do not require persistent server storage. Use a dedicated least-privileged database role with only SELECT on the intended tables. The application allows Supabase database and Supabase pooler hostnames only and refuses other server destinations. For a multi-user production deployment, add real application login, durable encrypted connection storage, authorization boundaries and audit logging before accepting sensitive customer data.
+`SESSION_SECRET` and one of `GEMINI_API_KEY` or `GROQ_API_KEY`. For one-click OAuth, also configure `APP_URL`, `SUPABASE_OAUTH_CLIENT_ID`, and `SUPABASE_OAUTH_CLIENT_SECRET`. Without OAuth settings the user can connect manually.
 
-Supabase OAuth requires a published OAuth app; **deploying the website alone does not configure Supabase authorization**, and an AI model cannot retrieve database passwords through OAuth. Full administrative access is neither required nor granted.
+## Scope and limitations
 
-## Testing
+Supabase's OAuth read-only SQL endpoint is **experimental/beta** and requires `projects:read` plus `database:read` scopes. This is a **read-only** analytics prototype, not a database editor. It has not implemented the proposal's cron scheduling, row-level audit triggers, email notifications, production organization RBAC or distributed abuse controls. Avoid connecting sensitive production records before implementing organizational authorization and privacy safeguards.
 
-Run `npm run typecheck` and `npm run build`. Query behavior requires a real Supabase database and an OpenAI API key. No sample outputs are presented as real data.
-
-Based on the QueryPilot X project proposal (SE331): the immediate workflow uses approved schema context, read-only SQL, real query results, auto-selected visualizations and grounded interpretations. Other workflows will be added in later phases.
+Gemini free-tier prompts can be used by Google for product improvement, depending on the service terms; do not send sensitive business data through the free tier without an appropriate privacy review.

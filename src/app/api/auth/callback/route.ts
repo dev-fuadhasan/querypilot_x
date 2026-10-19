@@ -1,60 +1,41 @@
 import { NextRequest, NextResponse } from "next/server";
 import { clearOAuthState, readOAuthState, saveSession } from "@/lib/session";
+import { exchangeOAuth, getOAuthSchema, listProjects } from "@/lib/management";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
 export async function GET(req: NextRequest) {
-  const appUrl = process.env.APP_URL || req.nextUrl.origin;
-  const failure = (error: string) => {
-    const result = NextResponse.redirect(new URL("/?error=" + encodeURIComponent(error), appUrl));
-    clearOAuthState(result);
-    return result;
-  };
-  if (req.nextUrl.searchParams.has("error")) return failure("Supabase authorization was cancelled.");
-  const authorization = await readOAuthState();
-  const state = req.nextUrl.searchParams.get("state");
-  const code = req.nextUrl.searchParams.get("code");
-  if (!authorization || !state || state !== authorization.state || !code) return failure("Supabase authorization expired. Please try again.");
-  const clientId = process.env.SUPABASE_OAUTH_CLIENT_ID;
-  const clientSecret = process.env.SUPABASE_OAUTH_CLIENT_SECRET;
-  if (!clientId || !clientSecret) return failure("Supabase OAuth is not configured.");
-  const callback = new URL("/api/auth/callback", appUrl).toString();
-  try {
-    const tokenResponse = await fetch("https://api.supabase.com/v1/oauth/token", {
-      method: "POST",
-      cache: "no-store",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        Accept: "application/json",
-        Authorization: "Basic " + Buffer.from(clientId + ":" + clientSecret).toString("base64"),
-      },
-      body: new URLSearchParams({
-        grant_type: "authorization_code",
-        code,
-        redirect_uri: callback,
-        code_verifier: authorization.verifier,
-      }),
-    });
-    if (!tokenResponse.ok) return failure("Supabase could not authorize this application.");
-    const tokens = await tokenResponse.json();
-    if (typeof tokens.access_token !== "string") return failure("Supabase returned no authorization token.");
-    const projectsResponse = await fetch("https://api.supabase.com/v1/projects", {
-      headers: { Authorization: "Bearer " + tokens.access_token },
-      cache: "no-store",
-    });
-    if (!projectsResponse.ok) return failure("Could not list Supabase projects. Check the integration scopes.");
-    const projectsData: unknown = await projectsResponse.json();
-    const projectList = Array.isArray(projectsData) ? projectsData : [];
-    const projects = projectList.slice(0, 25)
-      .filter((project): project is { id: string; name: string } =>
-        Boolean(project && typeof project.id === "string" && typeof project.name === "string"))
-      .map((project) => ({ id: project.id, name: project.name.slice(0, 90) }));
-    if (projects.length === 0) return failure("No Supabase projects were accessible to the integration.");
-    // Drop Management API tokens after discovery; we only need project name and ref.
-    const response = NextResponse.redirect(new URL("/?setup=project", appUrl));
-    saveSession(response, { projects });
+  const base = process.env.APP_URL || req.nextUrl.origin;
+  function fail(reason: string) {
+    const response = NextResponse.redirect(new URL("/?error=" + encodeURIComponent(reason), base));
     clearOAuthState(response);
     return response;
-  } catch {
-    return failure("Could not finish connecting to Supabase. Please try again.");
+  }
+  if (req.nextUrl.searchParams.has("error")) return fail("Supabase authorization was cancelled.");
+  const saved = await readOAuthState();
+  const state = req.nextUrl.searchParams.get("state");
+  const code = req.nextUrl.searchParams.get("code");
+  if (!saved || !code || saved.state !== state) return fail("Supabase authorization expired. Please try again.");
+  try {
+    const tokens = await exchangeOAuth(code, saved.verifier, new URL("/api/auth/callback", base).toString());
+    const projects = await listProjects(tokens.accessToken);
+    if (projects.length === 0) return fail("No accessible Supabase projects. Check project authorization.");
+    // Automatically connect a single project only after verifying read-only query access.
+    let selected: { projectRef?: string; projectName?: string } = {};
+    if (projects.length === 1) {
+      try {
+        const probe = await getOAuthSchema({ mode: "oauth", ...tokens, projectRef: projects[0].id, issuedAt: Date.now() });
+        if (!probe.length) throw new Error("No accessible public tables.");
+        selected = { projectRef: projects[0].id, projectName: projects[0].name };
+      } catch {
+        // Keep project authorized, show selector and allow manual read-only fallback.
+      }
+    }
+    const response = NextResponse.redirect(new URL(selected.projectRef ? "/?connected=1" : "/?setup=project", base));
+    saveSession(response, { mode: "oauth", ...tokens, projects, ...selected });
+    clearOAuthState(response);
+    return response;
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : "Could not complete Supabase authorization.");
   }
 }

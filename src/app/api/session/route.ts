@@ -1,15 +1,18 @@
 import { NextResponse } from "next/server";
-import { readSession } from "@/lib/session";
+import { aiConfigured, oauthConfigured, readSession } from "@/lib/session";
+import { selectedProvider } from "@/lib/ai";
 
 export const runtime = "nodejs";
 export async function GET() {
   const session = await readSession();
   return NextResponse.json({
-    connected: Boolean(session?.dbUrl),
+    connected: Boolean(session?.dbUrl || (session?.mode === "oauth" && session?.projectRef && session?.accessToken)),
     projectName: session?.projectName || "",
-    projects: session?.projects || [],
-    oauthEnabled: Boolean(process.env.SUPABASE_OAUTH_CLIENT_ID && process.env.SUPABASE_OAUTH_CLIENT_SECRET && process.env.APP_URL),
+    projects: session?.mode === "oauth" ? (session.projects || []) : [],
+    mode: session?.mode || null,
+    oauthEnabled: oauthConfigured(),
     configured: Boolean(process.env.SESSION_SECRET && process.env.SESSION_SECRET.length >= 32),
-    aiConfigured: Boolean(process.env.OPENAI_API_KEY),
+    aiConfigured: aiConfigured(),
+    aiProvider: selectedProvider(),
   }, { headers: { "Cache-Control": "no-store" } });
 }

@@ -1,88 +1,100 @@
-# Connect QueryPilot X to Supabase
+# QueryPilot X — Deployment and automatic Supabase connection
 
-## 1. Deploy to Vercel
+This is a dynamic multi-project Part 1 prototype. **No Supabase project URL, reference, database password or user data is hardcoded.** Each browser has an independent AES-256-GCM encrypted HttpOnly session.
 
-Import `dev-fuadhasan/querypilot_x` into Vercel with the **Next.js** framework preset. Set these **server-side environment variables** in Vercel Project → Settings → Environment Variables:
+## 1. Deploy the repository
 
-| Variable | Required | Purpose |
-| --- | --- | --- |
-| `SESSION_SECRET` | Yes | Encrypts connected database credentials in HttpOnly cookies; at least 32 unpredictable characters. |
-| `OPENAI_API_KEY` | Yes for AI | Lets the model plan safe SELECT queries and explain query results. |
-| `OPENAI_MODEL` | No | Defaults to `gpt-4.1-mini`. |
-| `APP_URL` | For OAuth | Your exact deployment origin, e.g. `https://your-project.vercel.app`. |
-| `SUPABASE_OAUTH_CLIENT_ID` | For OAuth | From your Supabase **organization** OAuth app. |
-| `SUPABASE_OAUTH_CLIENT_SECRET` | For OAuth | OAuth app secret; only on the server. |
+In [Vercel](https://vercel.com), import the GitHub repository `dev-fuadhasan/querypilot_x`; choose Next.js. Configure these **server-side** variables in Vercel Project Settings → Environment Variables, then redeploy:
 
-Generate a session secret locally with:
+| Variable | Required | Meaning |
+|---|---|---|
+| `SESSION_SECRET` | Yes | Cryptographically random secret of at least 32 characters; used to encrypt sessions. |
+| `GEMINI_API_KEY` | Gemini | Free-tier Gemini API key from Google AI Studio. |
+| `GEMINI_MODEL` | Optional | Defaults to `gemini-3.1-flash-lite`. |
+| `GROQ_API_KEY` | Groq | Alternative AI provider (or automatic rate-limit fallback). |
+| `GROQ_MODEL` | Optional | Defaults to `openai/gpt-oss-120b`. |
+| `AI_PROVIDER` | Optional | `auto` (Gemini first, then Groq for temporary failures), `gemini`, or `groq`. |
+| `APP_URL` | For OAuth | Exact deployed origin, e.g. `https://example.vercel.app`, with no trailing slash. |
+| `SUPABASE_OAUTH_CLIENT_ID` | For OAuth | Supabase Management OAuth app client ID. |
+| `SUPABASE_OAUTH_CLIENT_SECRET` | For OAuth | Supabase Management OAuth app client secret. |
 
-```sh
+Generate `SESSION_SECRET` locally:
+
+```shell
 node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
 ```
 
-Redeploy after configuring variables. Never put secret environment variables under the `NEXT_PUBLIC_` prefix.
+Do not put any secret under a `NEXT_PUBLIC_` variable. The app does **not** need `OPENAI_API_KEY`.
 
-## 2. Option A — Official Supabase authorization (recommended)
+### Which AI model should I choose?
 
-1. In your Supabase organization's settings, open **OAuth Apps** and create an OAuth app.
-2. Configure **Projects: Read** scope. You do not need Database: Write.
-3. Register this redirect URI exactly: `https://YOUR-DOMAIN/api/auth/callback`.
-4. Add the client ID, client secret, and `APP_URL` in Vercel.
-5. Click **Connect your database**. You will be redirected to Supabase to sign in and authorize access.
-6. Choose a permitted project when you return to QueryPilot X.
-7. Provide that project's PostgreSQL connection string using a limited-access role as described below.
+- **Recommended:** Gemini 3.1 Flash-Lite, where the Gemini API free tier is available for your account/location. Set `GEMINI_API_KEY`. Model availability and free quotas vary; verify in Google AI Studio.
+- **Optional alternative:** Groq's `openai/gpt-oss-120b`, with `GROQ_API_KEY`. Groq's Free plan has separate request and token quotas. The model also has paid pricing outside free allowance.
+- If you set both and leave `AI_PROVIDER=auto`, Groq is used only if Gemini reports a temporary outage or rate limit. Do not assume zero cost if billing is enabled on either account.
 
-**Important:** Supabase explicitly says Management OAuth cannot reveal an existing project's database password. OAuth enables verified project authorization and selection, but a separate connection string or database password is still required. QueryPilot X drops the temporary Management API token after project discovery.
+**Privacy warning:** Gemini's free tier may use submitted prompts/responses to improve its products. Before connecting personal, confidential or customer data, review Google's data usage terms and deploy appropriate AI privacy controls. QueryPilot masks common private columns in report previews, but this is not complete PII detection.
 
-Official docs: https://supabase.com/docs/guides/integrations/build-a-supabase-oauth-integration
+## 2. One-click Supabase connection (OAuth, recommended)
 
-## 3. Option B — Manual demo connection (no OAuth app required)
+Supabase supports an OAuth integration and a **read-only Management API database query endpoint**, so users do not have to copy or share the project's existing database password.
 
-If the OAuth environment variables are not configured, the same landing button opens a connection form. You can paste the PostgreSQL URI directly. This verifies access with the database but does not sign you in through Supabase's OAuth screen.
+1. In **Supabase Dashboard → Organization Settings → OAuth Apps**, create an integration and configure the app's name/redirect.
+2. Grant **Projects → Read** and **Database → Read** OAuth scopes. **Do not** grant Database → Write, Secrets, or any unrelated scopes.
+3. Configure its exact redirect URL: `https://YOUR-DOMAIN/api/auth/callback`.
+4. Add `APP_URL`, `SUPABASE_OAUTH_CLIENT_ID`, and `SUPABASE_OAUTH_CLIENT_SECRET` in Vercel.
+5. Visit QueryPilot X → **Connect your database** → sign in/authorize on Supabase.
+6. When the user has a single readable project, QueryPilot verifies it and opens the workspace automatically. With more than one project, the user selects a project, and QueryPilot verifies it.
+7. The app runs the Supabase Management API endpoint `POST /v1/projects/{ref}/database/query/read-only` under that user's OAuth authorization. The selected project is scoped to the signed-in visitor's encrypted session.
 
-Open Supabase Dashboard → select project → **Connect** → select **Session pooler** (recommended for IPv4), then copy the URI. It resembles:
+**Important:** This read-only SQL endpoint is **beta/experimental**, and some accounts/projects may not support it. Queries have to use fully schema-qualified table names (e.g., `public.orders`). Some Supabase database configurations may hide tables from the read-only user. If you encounter unsupported endpoint / authorization / missing accessible tables, use the manual read-only fallback below.
 
-```text
-postgresql://querypilot_reader.PROJECT_REF:ROLE_PASSWORD@aws-0-REGION.pooler.supabase.com:5432/postgres
-```
+Sources:
+- OAuth integration: https://supabase.com/docs/guides/integrations/build-a-supabase-oauth-integration
+- Supabase database read-only query endpoint: https://supabase.com/docs/reference/api/v1-read-only-query
+- Supabase OAuth scopes: https://supabase.com/docs/guides/integrations/build-a-supabase-oauth-integration/oauth-scopes
 
-Use the exact host in Supabase's Connect dialog; don't guess the pooler region or number. URLs containing passwords with special characters must percent-encode those characters.
+## 3. Manual fallback (works without an OAuth integration)
 
-## 4. Create a read-only role for analytics
+Users can connect **any standard Supabase PostgreSQL project** through its individual PostgreSQL connection string. QueryPilot accepts only official `db.*.supabase.co` and `*.pooler.supabase.com` endpoints, blocking arbitrary hosts.
 
-Run the following **one time** in the project's Supabase SQL Editor, replacing the placeholder password with your own strong secret:
+1. Open the individual Supabase project → **Connect → Session pooler**.
+2. For least privilege, create a read-only database role in that project's SQL editor:
 
 ```sql
-CREATE ROLE querypilot_reader LOGIN PASSWORD 'REPLACE_WITH_A_STRONG_PASSWORD';
+CREATE ROLE querypilot_reader LOGIN PASSWORD 'USE_A_LONG_RANDOM_PASSWORD';
 GRANT CONNECT ON DATABASE postgres TO querypilot_reader;
 GRANT USAGE ON SCHEMA public TO querypilot_reader;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO querypilot_reader;
 ```
 
-Optional (for tables created later by the owner who runs this command):
+3. Replace the role name and password in the pooler connection string. The pooler username should resemble `querypilot_reader.PROJECT_REF`. Percent-encode reserved characters in URI passwords. Click Connect.
 
-```sql
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO querypilot_reader;
-```
+Do not paste Supabase API keys or `service_role` keys into the PostgreSQL connection field: they are not SQL connection strings.
 
-If you use Row Level Security (RLS), its policies still apply. Configure appropriate SELECT policies for the read-only role or test using a dedicated non-sensitive demonstration dataset. Restrict grants to only the required tables for sensitive projects.
+## 4. Interaction and AI behavior
 
-Use `querypilot_reader.PROJECT_REF` as the pooler username with that role's password. In a direct connection, use `querypilot_reader` on `db.PROJECT_REF.supabase.co`. Do **not** paste your Supabase service-role key or API key into the PostgreSQL field; they are different credentials.
+After connection, the fixed-height workspace has a **wide left results canvas** and **right conversation panel**:
 
-## 5. What works in Part 1
+1. The user asks an ordinary business question. The server inspects the current project's readable table/column schema.
+2. Gemini (or Groq) decides whether missing specifics require a follow-up question, offering selectable options.
+3. If answerable, the model prepares SQL using actual public table/column names. The server checks that it is a single SELECT statement and only names approved schema tables.
+4. The left canvas receives **real progress events**: schema → SQL planning → SQL validation → SQL execution → AI insights. Once the SQL passes validation, a code panel displays it as Supabase begins execution. A "validated" status is **syntactic/safety validation, not a guarantee of correct business logic**.
+5. The server executes using a read-only database context, with a cap of 200 displayed rows; figures and cards are selected from actual results.
+6. The AI generates an analysis report using a limited preview of the returned data (up to 35 sanitized rows). Results can include KPI cards, tables, bar/line/pie/area/scatter plots and two visualizations when relevant.
+7. The original SQL remains visible in the final report for reproducibility. Users can disconnect or choose another project.
 
-- Server-verified Supabase PostgreSQL connection and connected toast.
-- OAuth project selection when the OAuth app is configured.
-- Schema inspection on every new question.
-- Natural-language question to validated PostgreSQL SELECT.
-- Follow-up clarification questions with selectable answers.
-- Responsive left-side results with KPI cards, tables, AI-selected line, bar, pie, area and scatter charts (up to two when useful) and an AI analysis report.
-- Displayable SQL for transparency; rows capped at 200; database read-only transaction and query timeout.
-- Fixed-viewport split-panel application with independently scrollable content areas.
+Current Part 1 is **read-only**. Scheduled reports (cron), audit triggers for database edits and email alerts are future parts; they must be installed and authorized separately, not by giving an LLM unrestricted write privileges. The original SE331 project explicitly separates these workflows.
 
-Scheduled reporting, cron jobs, audit triggers, change alerts and organization-specific RBAC are **later phases**, not included in this portion.
+## 5. Multi-user deployment cautions
 
-## 6. Security reminders
+- Each visitor's Supabase OAuth token and selected database are encrypted into their own HttpOnly cookie. No Supabase project is shared between visitors.
+- This does **not** yet supply production-grade organization RBAC, centralized token revocation, per-user durable reporting history, robust distributed abuse/rate limiting, or a vault. A public multi-tenant SaaS requires these additions.
+- The Supabase OAuth app must be correctly configured and published to third parties; otherwise only your organization/test users may be able to authorize it.
+- AI provider requests share the Vercel app's key and quotas across users. Test load and enable billing caps or stronger user-specific limits before wide release.
+- OAuth session tokens are refreshed server-side when necessary; users may need to reconnect when they revoke access. Disconnect clears QueryPilot's encrypted session.
+- SQL is executed only through the read-only endpoint or an explicit read-only PostgreSQL transaction. For the manual path, use database-level SELECT grants as a second independent safety boundary.
+- The current system supports Supabase PostgreSQL datasets; uploading arbitrary files is not a data ingestion feature yet. Import CSVs into a Supabase project before connecting.
 
-The database connection string is AES-256-GCM encrypted and stored in a Secure/HttpOnly cookie (Secure applies on HTTPS). Clearing the cookie via Disconnect ends the app's local session. This demo does not have a standalone user-account system, server-side vault, organization isolation, persistent event logging, or cross-user access policies. Do not connect production customer data until those controls, threat modeling and consent requirements are implemented.
+## 6. Verification
 
-Even though SQL execution is restricted to a read-only transaction, use a read-only database role as a second independent safety boundary. AI explanations are based on actual SQL results, but should be checked before consequential business decisions.
+GitHub Actions runs a TypeScript type check and a Next.js production build on each push. Actual model responses, OAuth consent and live Supabase queries can be integration-tested only when you supply your own OAuth app/key and project.

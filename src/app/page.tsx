@@ -18,6 +18,8 @@ type SessionStatus = {
   oauthEnabled: boolean;
   configured: boolean;
   aiConfigured: boolean;
+  mode?: "oauth" | "postgres" | null;
+  aiProvider?: "gemini" | "groq" | null;
 };
 type Column = { name: string; type: "number" | "date" | "text" };
 type DataResult = { columns: Column[]; rows: Record<string, unknown>[]; truncated: boolean };
@@ -33,8 +35,19 @@ type Message = {
   options?: string[]; original?: string;
 };
 type AskReply =
+  | { type: "stage"; stage: ProgressStage; detail: string; sql?: string }
   | { type: "clarification"; question: string; options: string[]; originalQuestion: string }
-  | ({ type: "result" } & Answer);
+  | ({ type: "result" } & Answer)
+  | { type: "error"; error: string };
+type ProgressStage = "schema" | "planning" | "validated" | "executing" | "report";
+type Progress = { stage: ProgressStage; detail: string; sql?: string };
+const STAGES: { stage: ProgressStage; label: string; description: string }[] = [
+  { stage: "schema", label: "Inspect database", description: "Discovering available tables" },
+  { stage: "planning", label: "Generate SQL", description: "Translating your question" },
+  { stage: "validated", label: "Validate query", description: "Checking read-only SQL" },
+  { stage: "executing", label: "Execute SQL", description: "Querying Supabase" },
+  { stage: "report", label: "Create insights", description: "Building your analysis" },
+];
 
 const COLORS = ["#6366f1", "#059669", "#f59e0b", "#3b82f6", "#e879f9", "#f97316"];
 const EXAMPLES = ["How did sales perform last month?", "Show the top products by revenue", "Compare this month with the previous month"];
@@ -193,6 +206,47 @@ function AnswerCanvas({ answer, question }: { answer: Answer; question: string }
     </div>
   );
 }
+
+function QueryProgress({ progress }: { progress: Progress }) {
+  const index = STAGES.findIndex((item) => item.stage === progress.stage);
+  return (
+    <div className="query-progress">
+      <div className="progress-shell">
+        <div className="progress-icon">
+          {progress.stage === "executing" ? <Database size={24} strokeWidth={1.7}/> :
+            progress.stage === "report" ? <BarChart3 size={24} strokeWidth={1.7}/> :
+            <Layers3 size={24} strokeWidth={1.7}/>}
+          <span className="progress-orbit"/>
+        </div>
+        <div className="progress-kicker"><span className="pulse-dot"/> LIVE QUERY EXECUTION</div>
+        <h2>{progress.stage === "validated" ? "SQL validated" :
+          progress.stage === "executing" ? "Executing your query" :
+          progress.stage === "report" ? "Preparing your analysis" :
+          progress.stage === "planning" ? "Generating your SQL" : "Exploring your database"}</h2>
+        <p className="progress-subtitle">{progress.detail}</p>
+        <div className="progress-steps">
+          {STAGES.map((step, i) => (
+            <div className={"progress-step " + (i < index ? "done" : i === index ? "active" : "")} key={step.stage}>
+              <span className="progress-step-icon">{i < index ? <Check size={13}/> :
+                i === index ? <LoaderCircle size={13} className="spin"/> : String(i+1).padStart(2,"0")}</span>
+              <div><strong>{step.label}</strong><small>{step.description}</small></div>
+              {i === index && <span className="progress-live">In progress</span>}
+              {i < index && <CheckCircle2 size={15} className="progress-done"/>}
+            </div>
+          ))}
+        </div>
+        {progress.sql && (
+          <div className="query-code">
+            <div className="query-code-top"><span><CheckCircle2 size={14}/> SELECT query passed safety checks</span><span>READ ONLY</span></div>
+            <pre>{progress.sql}</pre>
+            {progress.stage === "executing" && <div className="query-running"><span className="pulse-dot"/> Running query against the connected project…</div>}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 let messageCounter = 0;
 function nextMessage() { messageCounter += 1; return messageCounter; }
 
@@ -201,6 +255,7 @@ export default function Home() {
   const [phase, setPhase] = useState<"landing" | "setup" | "workspace">("landing");
   const [databaseUri, setDatabaseUri] = useState("");
   const [showUri, setShowUri] = useState(false);
+  const [manualMode, setManualMode] = useState(false);
   const [projectRef, setProjectRef] = useState("");
   const [connecting, setConnecting] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -208,6 +263,7 @@ export default function Home() {
   const [currentQuestion, setCurrentQuestion] = useState("");
   const [answer, setAnswer] = useState<Answer | null>(null);
   const [asking, setAsking] = useState(false);
+  const [progress, setProgress] = useState<Progress | null>(null);
   const [toast, setToast] = useState<{ text: string; error?: boolean } | null>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -226,11 +282,13 @@ export default function Home() {
       setSession(data);
       const params = new URLSearchParams(window.location.search);
       if (data.connected) setPhase("workspace");
+      if (params.has("connected") && data.connected) notify("Your Supabase database is connected.");
       else if (params.has("setup") || data.projects.length) setPhase("setup");
       if (data.projects.length) setProjectRef(data.projects[0].id);
       const err = params.get("error");
       if (err) notify(err, true);
-      if (params.has("setup") || err) window.history.replaceState({}, "", "/");
+      if (params.has("setup") || params.has("connected") || err) window.history.replaceState({}, "", "/");
+      if (!data.oauthEnabled) setManualMode(true);
     }).catch((err) => { if (active) notify(err instanceof Error ? err.message : "Could not start the application.", true); });
     return () => { active = false; };
   }, []);
@@ -242,7 +300,24 @@ export default function Home() {
   function beginConnect() {
     if (!session?.configured) return notify("Set SESSION_SECRET on Vercel before connecting.", true);
     if (session.oauthEnabled) window.location.assign("/api/auth/start");
-    else setPhase("setup");
+    else { setManualMode(true); setPhase("setup"); }
+  }
+  async function connectAuthorizedProject() {
+    if (!projectRef || connecting) return;
+    setConnecting(true);
+    try {
+      const res = await fetch("/api/projects/select", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectRef }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Could not connect this project.");
+      setSession((old) => old ? { ...old, connected: true, mode: "oauth", projectName: data.projectName } : old);
+      setAnswer(null); setMessages([]); setProgress(null);
+      setPhase("workspace");
+      notify("Your Supabase database is connected.");
+    } catch (error) { notify(error instanceof Error ? error.message : "Could not connect this project.", true); }
+    finally { setConnecting(false); }
   }
   async function connectDatabase(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -255,9 +330,10 @@ export default function Home() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Connection failed.");
-      setSession((old) => old ? { ...old, connected: true, projectName: data.projectName } : old);
+      setSession((old) => old ? { ...old, connected: true, mode: "postgres", projects: [], projectName: data.projectName } : old);
       setDatabaseUri("");
       setPhase("workspace");
+      setAnswer(null); setMessages([]); setProgress(null);
       notify("Your database is connected.");
     } catch (err) { notify(err instanceof Error ? err.message : "Could not connect.", true); }
     finally { setConnecting(false); }
@@ -268,7 +344,8 @@ export default function Home() {
       if (!res.ok) throw new Error("Could not disconnect.");
       setAnswer(null);
       setMessages([]);
-      setSession((old) => old ? { ...old, connected: false, projects: [], projectName: "" } : old);
+      setProgress(null);
+      setSession((old) => old ? { ...old, connected: false, mode: null, projects: [], projectName: "" } : old);
       setPhase("landing");
       notify("Database disconnected.");
     } catch { notify("Could not disconnect. Please retry.", true); }
@@ -278,31 +355,63 @@ export default function Home() {
     if (!prompt || asking || !session?.connected) return;
     setQuestion("");
     setAsking(true);
+    setProgress({ stage: "schema", detail: "Connecting to your approved Supabase schema" });
     setMessages((old) => [...old, { id: nextMessage(), role: "user", text: displayText || prompt }]);
     try {
-      const res = await fetch("/api/ask", {
+      const response = await fetch("/api/ask/stream", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question: prompt }),
       });
-      const data = await res.json() as AskReply & { error?: string };
-      if (!res.ok) throw new Error(data.error || "Could not analyze the database.");
-      if (data.type === "clarification") {
-        setMessages((old) => [...old, {
-          id: nextMessage(), role: "assistant", text: data.question,
-          options: data.options, original: data.originalQuestion,
-        }]);
-      } else {
-        setAnswer({ data: data.data, report: data.report, sql: data.sql });
-        setCurrentQuestion(displayText ? prompt : text);
-        setMessages((old) => [...old, {
-          id: nextMessage(), role: "assistant",
-          text: data.data.rows.length ? "Your analysis is ready. I've placed the results and report in the workspace." : "The query ran successfully, but no matching records were found. See the workspace for details.",
-        }]);
+      if (!response.ok) {
+        const value = await response.json() as { error?: string };
+        throw new Error(value.error || "Unable to analyze your data.");
       }
-    } catch (err) {
+      if (!response.body) throw new Error("The AI analysis stream could not be started.");
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let finished = false;
+      async function handleEvent(item: AskReply) {
+        if (item.type === "stage") {
+          setProgress({ stage: item.stage, detail: item.detail, sql: item.sql });
+        } else if (item.type === "clarification") {
+          finished = true;
+          setProgress(null);
+          setMessages((old) => [...old, {
+            id: nextMessage(), role: "assistant", text: item.question,
+            options: item.options, original: item.originalQuestion,
+          }]);
+        } else if (item.type === "result") {
+          finished = true;
+          setAnswer({ data: item.data, report: item.report, sql: item.sql });
+          setCurrentQuestion(prompt);
+          setProgress(null);
+          setMessages((old) => [...old, {
+            id: nextMessage(), role: "assistant",
+            text: item.data.rows.length ? "The analysis is ready. Explore the verified results and AI report on the left." :
+              "The query completed but returned no matching records. The workspace has more details.",
+          }]);
+        } else if (item.type === "error") {
+          throw new Error(item.error);
+        }
+      }
+      while (true) {
+        const { done, value } = await reader.read();
+        buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) if (line.trim()) await handleEvent(JSON.parse(line) as AskReply);
+        if (done) {
+          if (buffer.trim()) await handleEvent(JSON.parse(buffer) as AskReply);
+          break;
+        }
+      }
+      if (!finished) throw new Error("The response ended before analysis was complete. Try again.");
+    } catch (error) {
+      setProgress(null);
       setMessages((old) => [...old, {
         id: nextMessage(), role: "assistant",
-        text: err instanceof Error ? err.message : "Something went wrong. Please try again.",
+        text: error instanceof Error ? error.message : "Something went wrong. Please try again.",
       }]);
     } finally { setAsking(false); }
   }
@@ -328,12 +437,27 @@ export default function Home() {
         <div className="onboarding">
           <div className="onboard-brand"><Brand/></div>
           <main className="setup-shell">
-            <button className="back-link" onClick={() => setPhase("landing")}><ArrowRight size={16}/> Back</button>
+            <button className="back-link" onClick={() => setPhase(session.connected ? "workspace" : "landing")}><ArrowRight size={16}/> Back</button>
             <div className="setup-icon"><SupabaseMark size={31}/></div>
             <h1>Connect your database</h1>
-            <p>Enter the PostgreSQL connection string from your Supabase project's Connect dialog.</p>
-            <form className="connect-form" onSubmit={connectDatabase}>
-              {session.projects.length > 0 && (
+            <p>{session.projects.length && !manualMode ? "Select your authorized Supabase project. No database password is needed for OAuth read-only access." :
+              "Connect any Supabase PostgreSQL project using its read-only connection string."}</p>
+            {session.projects.length > 0 && !manualMode && (
+              <div className="oauth-selector">
+                <label className="form-group"><span>Your Supabase projects</span>
+                  <select value={projectRef} onChange={(event) => setProjectRef(event.target.value)}>
+                    {session.projects.map((project) => <option value={project.id} key={project.id}>{project.name}</option>)}
+                  </select>
+                </label>
+                <button className="black-button full" onClick={connectAuthorizedProject} disabled={connecting || !projectRef}>
+                  {connecting ? <LoaderCircle size={18} className="spin"/> : <SupabaseMark size={20}/>}
+                  {connecting ? "Connecting read-only…" : "Connect selected project"}<ArrowRight size={17}/>
+                </button>
+                <div className="auto-connect-hint"><ShieldCheck size={16}/> Read-only OAuth authorization. No PostgreSQL password required.</div>
+              </div>
+            )}
+            {(manualMode || !session.projects.length) && <form className="connect-form" onSubmit={connectDatabase}>
+              {session.projects.length > 0 && manualMode && (
                 <label className="form-group">
                   <span>Supabase project</span>
                   <select value={projectRef} onChange={(event) => setProjectRef(event.target.value)}>
@@ -356,9 +480,16 @@ export default function Home() {
                 {connecting ? <LoaderCircle size={18} className="spin"/> : <LockKeyhole size={17}/>}
                 {connecting ? "Verifying connection…" : "Connect securely"}<ArrowRight size={17}/>
               </button>
-            </form>
+            </form>}
+            {session.oauthEnabled && <button type="button" className="connection-toggle"
+              onClick={() => {
+                if (manualMode && !session.projects.length) window.location.assign("/api/auth/start");
+                else setManualMode(!manualMode);
+              }}>
+              {manualMode ? (session.projects.length ? "Use authorized Supabase projects" : "Connect using Supabase OAuth") : "Use a PostgreSQL read-only connection instead"} <ArrowRight size={14}/>
+            </button>}
             <div className="setup-help">
-              <ShieldCheck size={17}/><span>Stored in an encrypted, HttpOnly session. Queries are read-only. For best security, use a dedicated SELECT-only database role.</span>
+              <ShieldCheck size={17}/><span>Sessions are encrypted and isolated by browser. OAuth uses Supabase's read-only query endpoint; manual connections should use a SELECT-only role.</span>
             </div>
             <a className="doc-link" href="https://supabase.com/docs/guides/database/connecting-to-postgres" target="_blank" rel="noreferrer">
               Where can I find my connection string? <ArrowUpRight size={14}/>
@@ -373,11 +504,16 @@ export default function Home() {
               <Brand small/>
               <div className="header-right">
                 <div className="connected-pill"><span className="online-indicator"/><SupabaseMark size={16}/><span className="connected-name">{session.projectName}</span><Check size={14}/></div>
+                <button className="icon-button" title="Switch Supabase project" aria-label="Switch project" onClick={() => {
+                  setManualMode(session.mode !== "oauth");
+                  setProjectRef(session.projects[0]?.id || "");
+                  setPhase("setup");
+                }}><Database size={17}/></button>
                 <button className="icon-button" title="Disconnect database" aria-label="Disconnect database" onClick={disconnect}><LogOut size={17}/></button>
               </div>
             </header>
             <main className="results-scroll">
-              {!answer ? (
+              {asking && progress ? <QueryProgress progress={progress}/> : !answer ? (
                 <div className="empty-results">
                   <div className="empty-icon"><Sparkles size={26} strokeWidth={1.5}/></div>
                   <h2>Ask. Analyze. Understand.</h2>
@@ -415,7 +551,7 @@ export default function Home() {
                   </div>
                 </div>
               ))}
-              {asking && <div className="typing"><LoaderCircle size={16} className="spin"/> Checking your database and preparing the answer…</div>}
+              {asking && <div className="typing"><LoaderCircle size={16} className="spin"/> {progress?.detail || "Connecting to your database…"}</div>}
               {answer && !asking && messages.length > 0 && answer.report.suggestedQuestions.length > 0 && (
                 <div className="follow-up-questions">
                   <div className="follow-up-title">KEEP EXPLORING</div>
@@ -424,7 +560,7 @@ export default function Home() {
               )}
             </div>
             <div className="composer-wrap">
-              {!session.aiConfigured && <div className="config-hint">Set OPENAI_API_KEY in Vercel to enable analysis.</div>}
+              {!session.aiConfigured && <div className="config-hint">Set GEMINI_API_KEY or GROQ_API_KEY in Vercel to enable AI analysis.</div>}
               <form className="composer" onSubmit={(event) => {event.preventDefault(); askQuestion(question);}}>
                 <textarea rows={2} value={question} maxLength={700} disabled={asking}
                   onChange={(event) => setQuestion(event.target.value)}
@@ -434,7 +570,7 @@ export default function Home() {
                   {asking ? <LoaderCircle size={17} className="spin"/> : <SendHorizontal size={17}/>}
                 </button></div>
               </form>
-              <div className="composer-caption">QueryPilot can make mistakes. Verify important insights.</div>
+              <div className="composer-caption">{session.aiProvider === "groq" ? "Groq" : "Gemini"} AI · Read-only data · Verify important insights</div>
             </div>
           </aside>
         </div>
