@@ -397,6 +397,8 @@ export default function Home() {
   const [starters, setStarters] = useState<string[]>([]);
   const [starterLoading, setStarterLoading] = useState(false);
   const [starterNote, setStarterNote] = useState("");
+  const [tableCatalog, setTableCatalog] = useState<{name: string; columns: number}[]>([]);
+  const [tableScope, setTableScope] = useState("all");
   const [phase, setPhase] = useState<"landing" | "setup" | "workspace">("landing");
   const [databaseUri, setDatabaseUri] = useState("");
   const [showUri, setShowUri] = useState(false);
@@ -443,19 +445,22 @@ export default function Home() {
     return () => { active = false; };
   }, []);
   useEffect(() => {
-    if (!session?.connected) { setStarters([]); setStarterNote(""); setStarterLoading(false); return; }
+    if (!session?.connected) { setStarters([]); setTableCatalog([]); setTableScope("all"); setStarterNote(""); setStarterLoading(false); return; }
     const controller = new AbortController();
     setStarters([]);
+    setTableCatalog([]);
+    setTableScope("all");
     setStarterNote("");
     setStarterLoading(true);
     fetch("/api/discovery", { signal: controller.signal, cache: "no-store" })
       .then(async response => {
         if (!response.ok) throw new Error("Cannot inspect this project's data right now.");
-        return await response.json() as { starters?: string[]; note?: string };
+        return await response.json() as { starters?: string[]; catalog?: {name:string;columns:number}[]; note?: string };
       })
       .then(data => {
         if (!controller.signal.aborted) {
           setStarters(Array.isArray(data.starters) ? data.starters.filter(item => typeof item === "string").slice(0, 5) : []);
+          setTableCatalog(Array.isArray(data.catalog) ? data.catalog.filter(item => typeof item.name==="string") : []);
           setStarterNote(data.note || "");
         }
       })
@@ -564,7 +569,7 @@ export default function Home() {
         method: "POST", headers: { "Content-Type": "application/json" },
         signal: controller.signal,
         cache: "no-store",
-        body: JSON.stringify({ question: prompt }),
+        body: JSON.stringify({ question: prompt, tableScope }),
       });
       if (!isLatest()) return;
       if (!response.ok) {
@@ -778,6 +783,26 @@ export default function Home() {
                 <button className="icon-button" title="Disconnect database" aria-label="Disconnect database" onClick={disconnect}><LogOut size={17}/></button>
               </div>
             </header>
+            <div className="database-scope-bar">
+              <div className="database-scope-label"><Database size={15}/><span>TABLES</span></div>
+              <select className="database-scope-select" aria-label="Choose a database table or all tables"
+                value={tableScope} disabled={asking || connecting || starterLoading || !tableCatalog.length}
+                onChange={event => {
+                  requestIdRef.current += 1;
+                  requestAbortRef.current?.abort();
+                  setTableScope(event.target.value);
+                  setAnswer(null); setMessages([]); setCurrentQuestion(""); setQuestion("");
+                  setProgress(null); setActiveClarification(null); setAnalysisError(null);
+                }}>
+                <option value="all">All tables ({tableCatalog.length})</option>
+                {tableCatalog.map(table => <option key={table.name} value={table.name}>
+                  {table.name} ({table.columns} columns)
+                </option>)}
+              </select>
+              <span className="database-scope-hint">{tableScope === "all"
+                ? "Ask questions across available tables"
+                : "Queries restricted to " + tableScope}</span>
+            </div>
             <main className="results-scroll">
               {asking && progress ? <QueryProgress progress={progress}/> :
                 activeClarification ? (

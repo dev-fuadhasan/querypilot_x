@@ -10,6 +10,7 @@ import { inspectProject, isChartOnlyRequest, chartQueryFor, verifiedChoices } fr
 import { requestedChartTypes } from "@/lib/charts";
 import type { ChartKind } from "@/lib/charts";
 import { SqlValidationError } from "@/lib/sql-guard";
+import { resolveTableScope, simpleRequest, identifyQuestionTable } from "@/lib/table-routing";
 import { recognizeEntityTrend, recognizeTopRanking, temporalTrendQuery, pivotTemporalTrend, missingTrendChoices, topRankingSql } from "@/lib/trend";
 
 export const runtime = "nodejs";
@@ -38,9 +39,11 @@ export async function POST(request: NextRequest) {
   if (!session || !(session.dbUrl || (session.mode === "oauth" && session.projectRef)))
     return NextResponse.json({ error: "Connect a Supabase database first." }, { status: 401 });
   let question = "";
+  let tableScope: unknown = "all";
   try {
     const body: unknown = await request.json();
     question = typeof (body as { question?: unknown })?.question === "string" ? String((body as { question: string }).question).trim() : "";
+    tableScope = (body as { tableScope?: unknown })?.tableScope ?? "all";
   } catch { return NextResponse.json({ error: "Invalid request." }, { status: 400 }); }
   if (!question || question.length > 900) return NextResponse.json({ error: "Ask a question in 900 characters or less." }, { status: 400 });
   let active = session;
@@ -67,10 +70,38 @@ export async function POST(request: NextRequest) {
         send({ type: "stage", stage: "schema", detail: "Inspecting approved database tables and columns" });
         const discovered = active.mode === "oauth" ? await getOAuthSchema(active) : await getSchema(active.dbUrl || "");
         if (!discovered.length) throw new Error("No readable public tables were found in the connected project.");
-        const schema = await enrichSchemaWithExamples(discovered, async (sql) => {
+        const scopedTables = resolveTableScope(tableScope, discovered);
+        if (tableScope !== "all") {
+          const mentioned = identifyQuestionTable(question, discovered);
+          if (mentioned.length === 1 && mentioned[0].name !== tableScope) {
+            send({ type: "error", error: "Your question refers to " + mentioned[0].name +
+              ", but your current table selection is " + tableScope +
+              ". Select " + mentioned[0].name + " or All tables from the table selector." });
+            return;
+          }
+        }
+        const relevant = tableScope === "all" ? identifyQuestionTable(question, scopedTables) : [];
+        const approvedTables = relevant.length === 1 ? relevant : scopedTables;
+        send({ type: "stage", stage: "schema", detail: "Using " + approvedTables.length + " selected/readable table(s) from " + discovered.length + " in this project" });
+        const schema = await enrichSchemaWithExamples(approvedTables, async (sql) => {
           if (active.mode === "oauth") return managementReadOnly(active, sql);
           return (await executeQuery(active.dbUrl || "", sql)).rows;
         });
+        // Answer resolvable list and ranking disambiguation requests without a model call.
+        const straightforward = simpleRequest(question, schema);
+        if (straightforward && "sql" in straightforward) {
+          const sql = guardSql(straightforward.sql);
+          enforceTables(sql, schema);
+          send({type:"stage",stage:"executing",detail:straightforward.title,sql});
+          const data = active.mode === "oauth" ? await executeOAuthQuery(active, sql) : await executeQuery(active.dbUrl || "", sql);
+          const report = await explainResult(question,sql,data);
+          send({type:"result",data,report,sql});
+          return;
+        }
+        if (straightforward && "options" in straightforward) {
+          send({type:"clarification",...straightforward,originalQuestion:question,example:straightforward.optionQueries[0]});
+          return;
+        }
         // Deterministic preflight for comparative rankings and true historical trends.
         // Never manufacture five timeseries out of five snapshot rating values.
         const trendIntent = recognizeEntityTrend(question, schema);
@@ -238,9 +269,18 @@ export async function POST(request: NextRequest) {
         const report = await explainResult(question, sql, data);
         send({ type: "result", data, report, sql });
       } catch (err) {
-        const message = err instanceof Error ? err.message : "The analysis could not be completed.";
-        const known = /SQL|read.only|Supabase|public|SELECT|AI |query|database|tables|model|API key|rate.limit|provider|schema|authorization|connect/i.test(message);
-        send({ type: "error", error: known ? message : "The analysis failed. Check your question and database permissions." });
+        const message = err instanceof Error ? err.message : "The request could not be completed.";
+        // Clear, bounded explanations without exposing raw DB/provider payloads or credentials.
+        let explanation = "QueryPilot could not finish this request.";
+        if (err instanceof SqlValidationError) explanation = message;
+        else if (err instanceof SupabaseQueryError) explanation = message;
+        else if (/table is unavailable|Selected table|No readable public tables|unapproved table/i.test(message)) explanation = message;
+        else if (/AI|model|Gemini|Groq|provider|rate.limit|API key|valid JSON|safe query|couldn't form/i.test(message))
+          explanation = "AI planning failed: " + message.slice(0, 250);
+        else if (/Supabase|permission|read.only|connection|connect|database|query timeout|statement timeout|schema|column|relation/i.test(message))
+          explanation = "Database query failed: " + message.slice(0, 250);
+        else if (/SQL|SELECT|syntax|unsupported operation/i.test(message)) explanation = message.slice(0, 250);
+        send({ type: "error", error: explanation + " Verify your selected table, or switch to All tables." });
       } finally {
         if (!closed) try { controller.close(); } catch { /* client disconnected */ }
       }

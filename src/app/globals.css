@@ -351,3 +351,12 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .starter-checking{border:1px dashed #e1e5ea;color:#8a929e;font-size:11px;line-height:1.65;border-radius:9px;padding:15px;display:flex;align-items:center;gap:10px}
 .suggestions button{white-space:normal;overflow-wrap:anywhere}
 @media(max-width:720px){.chart-panel-sql summary{padding:9px 12px;font-size:10px}.starter-checking{padding:12px}.chart-panel-block{gap:0}}
+
+/* Project-wide or single-table dataset scope */
+.database-scope-bar{display:flex;align-items:center;gap:10px;padding:9px clamp(12px,2vw,25px);border-bottom:1px solid #e8eaee;background:#fff;min-height:52px;min-width:0}
+.database-scope-label{display:flex;align-items:center;gap:7px;color:#7e8590;font-size:10px;font-weight:790;letter-spacing:1.2px;flex-shrink:0}
+.database-scope-select{max-width:min(360px,56vw);min-width:150px;min-height:33px;background:#f9fafb;border:1px solid #dfe3e9;color:#303741;font-size:12px;font-weight:650;padding:5px 32px 5px 11px;border-radius:8px;overflow:hidden;text-overflow:ellipsis}
+.database-scope-select:focus-visible{outline:2px solid #5b7bbc;outline-offset:2px}
+.database-scope-select:disabled{opacity:.62;cursor:wait}
+.database-scope-hint{font-size:10px;color:#8b919b;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media(max-width:720px){.database-scope-bar{gap:7px;padding:8px 12px;min-height:49px}.database-scope-select{min-width:0;flex:1;max-width:none}.database-scope-hint{display:none}}

@@ -15,13 +15,13 @@ export type ProjectProfile = { tables: TableProfile[]; starters: string[] };
 export type VerifiedOption = { label: string; query: string };
 export type ChartQuery = { kind: ChartKind; title: string; sql: string; xKey: string; yKeys: string[] };
 
-const CATEGORY = /(?:^|_)(category|status|region|state|country|segment|type|department|channel|group|class|product_category|priority|level)(?:_|$)/i;
-const NUMERIC = /(?:^|_)(price|cost|amount|quantity|qty|rating|score|count|revenue|sales|total|percentage|discount|age|value|profit|duration|temperature)(?:_|$)/i;
+const CATEGORY = /(?:^|_)(category|status|region|state|country|segment|type|department|channel|group|class|product_category|priority|level|sex|gender|embarked|port|survived|survival|pclass)(?:_|$)/i;
+const NUMERIC = /(?:^|_)(price|cost|amount|quantity|qty|rating|score|count|revenue|sales|total|percentage|discount|age|value|profit|duration|temperature|fare|survived|pclass)(?:_|$)/i;
 const PRIVATE = /(?:password|token|secret|key|email|phone|address|user|person|customer|employee|patient|owner|id\b|name\b|birth|ssn|bank|card|auth|ip_)/i;
 const DATE = /(?:^|_)(date|datetime|timestamp|created_at|updated_at|month|year)(?:_|$)/i;
 const DATE_TYPE = /date|timestamp/i;
 const NUM_TYPE = /integer|bigint|smallint|numeric|decimal|double precision|real|float/i;
-const MAX_TABLES = 3;
+const MAX_TABLES = 12;
 export function quoteColumn(name: string): string { return '"' + name.replace(/"/g, '""') + '"'; }
 function numericValueExpression(column: string): string {
   const cleaned = "NULLIF(regexp_replace(" + quoteColumn(column) + "::text, '[^0-9.-]', '', 'g'), '')";
@@ -43,8 +43,8 @@ function parsedNumber(value: unknown): number | null {
 }
 export function inspectColumns(table: TableInfo) {
   const cols = table.columns.filter(c => !PRIVATE.test(c.name));
-  const categories = cols.filter(c => CATEGORY.test(c.name) && /text|character|varchar|citext/i.test(c.type)).slice(0, 2);
-  const numeric = cols.filter(c => NUMERIC.test(c.name) && (/text|character|varchar|citext/i.test(c.type) || NUM_TYPE.test(c.type))).slice(0, 3);
+  const categories = cols.filter(c => CATEGORY.test(c.name) && /text|character|varchar|citext/i.test(c.type)).slice(0, 3);
+  const numeric = cols.filter(c => NUMERIC.test(c.name) && (/text|character|varchar|citext/i.test(c.type) || NUM_TYPE.test(c.type))).slice(0, 4);
   const dates = cols.filter(c => DATE_TYPE.test(c.type) || (DATE.test(c.name) && /text|character|varchar/i.test(c.type))).slice(0, 1);
   return { categories, numeric, dates };
 }

@@ -17,11 +17,14 @@ export async function GET() {
       : { session: existing, refreshed: false };
     const active = access.session;
     const schema = active.mode === "oauth" ? await getOAuthSchema(active) : await getSchema(active.dbUrl || "");
-    if (!schema.length) return NextResponse.json({ starters: [], tables: [], note: "No readable public tables." });
+    if (!schema.length) return NextResponse.json({ starters: [], tables: [], catalog: [], note: "No readable public tables." });
     const profile = await inspectProject(schema, async sql => active.mode === "oauth"
       ? await managementReadOnly(active, sql)
       : (await executeQuery(active.dbUrl || "", sql)).rows);
-    const response = NextResponse.json(profile, { headers: { "Cache-Control": "private, no-store" } });
+    const response = NextResponse.json({
+      ...profile,
+      catalog: schema.map(table => ({ name: table.name, columns: table.columns.length }))
+    }, { headers: { "Cache-Control": "private, no-store" } });
     if (access.refreshed) {
       const { issuedAt: _previous, ...current } = active;
       saveSession(response, current);
@@ -29,7 +32,7 @@ export async function GET() {
     return response;
   } catch {
     return NextResponse.json({
-      starters: [], tables: [], note: "The connected project's sample data could not be inspected. You can still enter a question."
+      starters: [], tables: [], catalog: [], note: "Could not inspect tables. Please refresh the connection or check read-only access."
     }, { headers: { "Cache-Control": "private, no-store" } });
   }
 }
