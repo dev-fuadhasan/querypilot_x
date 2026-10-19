@@ -25,7 +25,7 @@ function requestedTopCount(question: string): number | null {
   return n >= 1 && n <= 100 ? n : null;
 }
 function tokens(value: string): string[] {
-  return value.toLowerCase().replace(/([a-z])([A-Z])/g, "$1 $2").split(/[^a-z0-9]+/).filter(Boolean);
+  return value.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
 }
 function subjectWords(question: string): string[] {
   const words = tokens(question);
