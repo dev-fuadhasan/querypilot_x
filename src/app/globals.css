@@ -288,3 +288,51 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
   .query-code-top{padding:10px}
   .query-code pre{font-size:10px}
 }
+
+
+/* Multi-chart dashboard: grid, heatmap, KPI cards and custom clarification */
+.answer-canvas{max-width:1500px;width:100%;padding:clamp(16px,2.5vw,38px)}
+.charts-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
+.charts-grid.single-chart{grid-template-columns:minmax(0,1fr)}
+.charts-grid>.viz-card{min-width:0;width:100%}
+.charts-grid .chart-box{height:clamp(265px,27vw,370px);padding:15px 12px 15px 3px}
+.chart-card-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;padding:18px}
+.chart-stat{min-width:0;padding:17px;border:1px solid #eaedf1;border-radius:10px;background:#fcfcfd;display:flex;flex-direction:column;gap:8px}
+.chart-stat-label{font-size:11px;color:#7d848f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chart-stat strong{font-size:clamp(19px,2.2vw,28px);font-weight:730;overflow-wrap:anywhere;color:#20252a}
+.chart-stat small{font-size:10px;color:#a0a6af}
+.heatmap-wrap{padding:14px 17px 17px;overflow-x:auto}
+.heatmap-header,.heatmap-row{display:grid;gap:5px;min-width:350px;align-items:stretch;margin-bottom:5px}
+.heatmap-header span{font-size:10px;font-weight:710;color:#7c8794;padding:7px 6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.heatmap-row-label{font-size:10px;color:#505965;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;align-self:center}
+.heatmap-cell{min-height:31px;padding:8px 5px;display:grid;place-items:center;border-radius:5px;font-size:10px;font-variant-numeric:tabular-nums;font-weight:670}
+.heatmap-footnote{font-size:10px;color:#9299a2;padding:12px 0 0}
+.chart-unavailable{display:flex;align-items:flex-start;gap:9px;border:1px solid #e9eaf0;background:#fafbfd;border-radius:12px;padding:18px;color:#6b7380;font-size:12px;line-height:1.8}
+.chart-unavailable svg{flex-shrink:0;margin-top:2px}
+.sql-results-panel{overflow:hidden}
+.sql-readonly-tag{display:inline-flex;align-items:center;gap:6px;font-size:10px;font-weight:750;letter-spacing:.4px;color:#488568}
+.executed-sql{padding:20px 22px!important;white-space:pre-wrap!important;overflow-wrap:anywhere!important;word-break:break-word!important;background:#f9fafb;margin:0;color:#404750;font:11px/1.85 ui-monospace,SFMono-Regular,Consolas,monospace;max-height:none!important;overflow:visible!important}
+.clarification-custom{display:flex;flex-direction:column;gap:9px;margin-top:11px;padding-top:13px;border-top:1px solid #eef0f3;min-width:0}
+.clarification-custom>label{font-size:11px;color:#727984;font-weight:700}
+.clarification-custom-row{display:flex;min-width:0;align-items:stretch;gap:8px}
+.clarification-custom-row input{flex:1;min-width:0;padding:12px 11px;border:1px solid #e1e5eb;border-radius:8px;font-size:11px;background:#fff;color:#29303b}
+.clarification-custom-row button{display:flex;align-items:center;justify-content:center;gap:5px;padding:10px 12px;border:1px solid #1d1f22;background:#1d1f22;color:#fff;border-radius:8px;font-size:11px;white-space:nowrap}
+.clarification-custom-row button:hover:not(:disabled){background:#393c41}
+.message-content .clarification-custom-row{flex-wrap:wrap}
+.message-content .clarification-custom-row input{min-width:140px}
+@media(max-width:1170px){
+ .charts-grid{grid-template-columns:minmax(0,1fr)}
+ .charts-grid .chart-box{height:300px}
+}
+@media(max-width:960px){
+ .charts-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .charts-grid .chart-box{height:260px}
+}
+@media(max-width:720px){
+ .answer-canvas{padding:14px 13px 23px}
+ .charts-grid{grid-template-columns:minmax(0,1fr);gap:12px}
+ .charts-grid .chart-box{height:270px}
+ .heatmap-wrap{padding:10px}
+ .executed-sql{padding:12px!important;font-size:10px}
+ .clarification-custom-row input{font-size:12px}
+}

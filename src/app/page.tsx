@@ -2,14 +2,17 @@
 
 import { useEffect, useRef, useState } from "react";
 import { initialProjectRef, resolveStartupPhase } from "@/lib/connection-flow";
+import { requestedChartTypes } from "@/lib/charts";
+import type { ChartSpec } from "@/lib/charts";
 import {
   ArrowRight, ArrowUpRight, BarChart3, Check, CheckCircle2, ChevronDown,
-  CircleHelp, Database, Eye, EyeOff, FileText, Layers3, LoaderCircle,
+  CircleHelp, Database, Eye, EyeOff, Layers3, LoaderCircle,
   LockKeyhole, LogOut, MessageSquareText, SendHorizontal, ShieldCheck, Sparkles, Table2, X,
 } from "lucide-react";
 import {
-  Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie,
-  PieChart, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis,
+  Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line, LineChart, Pie,
+  PieChart, PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart,
+  ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis,
 } from "recharts";
 
 type SessionStatus = {
@@ -25,11 +28,11 @@ type SessionStatus = {
 };
 type Column = { name: string; type: "number" | "date" | "text" };
 type DataResult = { columns: Column[]; rows: Record<string, unknown>[]; truncated: boolean };
-type ChartSpec = { type: "bar" | "line" | "pie" | "area" | "scatter"; title: string; xKey: string; yKeys: string[] };
 type Report = {
-  title: string; summary: string; insights: string[]; caveats: string[];
-  visualization: "bar" | "line" | "pie" | "area" | "scatter" | "table" | "kpi";
-  xKey?: string; yKeys?: string[]; visualizations: ChartSpec[]; suggestedQuestions: string[];
+  title: string;
+  summary: string;
+  visualizations: ChartSpec[];
+  suggestedQuestions: string[];
 };
 type Answer = { data: DataResult; report: Report; sql: string };
 type Message = {
@@ -50,7 +53,7 @@ const STAGES: { stage: ProgressStage; label: string; description: string }[] = [
   { stage: "planning", label: "Generate SQL", description: "Translating your question" },
   { stage: "validated", label: "Validate query", description: "Checking read-only SQL" },
   { stage: "executing", label: "Execute SQL", description: "Querying Supabase" },
-  { stage: "report", label: "Create insights", description: "Building your analysis" },
+  { stage: "report", label: "Render charts", description: "Preparing requested visuals" },
 ];
 
 const COLORS = ["#6366f1", "#059669", "#f59e0b", "#3b82f6", "#e879f9", "#f97316"];
@@ -96,63 +99,163 @@ function DataTable({ data }: { data: DataResult }) {
     </div>
   );
 }
+function chartNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+function HeatmapView({ data, view }: { data: DataResult; view: ChartSpec }) {
+  const rows = data.rows.slice(0, 22);
+  const columns = view.yKeys.slice(0, 5);
+  const valid = rows.flatMap(row => columns.map(key => chartNumber(row[key])).filter((v): v is number => v !== null));
+  const min = valid.length ? Math.min(...valid) : 0;
+  const max = valid.length ? Math.max(...valid) : 0;
+  return (
+    <div className="heatmap-wrap" aria-label={view.title + " data heatmap"} role="table">
+      <div className="heatmap-header" style={{ gridTemplateColumns: "minmax(120px,1.5fr) repeat(" + columns.length + ",minmax(68px,1fr))" }}>
+        <span>{prettyLabel(view.xKey)}</span>{columns.map(key => <span key={key}>{prettyLabel(key)}</span>)}
+      </div>
+      {rows.map((row, index) => (
+        <div className="heatmap-row" role="row" key={index}
+          style={{ gridTemplateColumns: "minmax(120px,1.5fr) repeat(" + columns.length + ",minmax(68px,1fr))" }}>
+          <span className="heatmap-row-label" title={valueText(row[view.xKey])}>{valueText(row[view.xKey])}</span>
+          {columns.map(key => {
+            const n = chartNumber(row[key]);
+            const strength = n === null ? 0 : max === min ? 0.5 : (n - min) / (max - min);
+            return <span className="heatmap-cell" key={key}
+              title={prettyLabel(key) + ": " + (n === null ? "No value" : valueText(n))}
+              style={{ background: n === null ? "#f3f4f6" : "rgba(53,119,197," + (0.1 + strength * 0.7).toFixed(3) + ")",
+                color: strength > .62 ? "#fff" : "#24354a" }}>
+              {n === null ? "—" : valueText(n)}
+            </span>;
+          })}
+        </div>
+      ))}
+      {data.rows.length > rows.length && <div className="heatmap-footnote">Showing first {rows.length} rows. All query rows remain available in the table below.</div>}
+    </div>
+  );
+}
 function ChartView({ answer, view }: { answer: Answer; view: ChartSpec }) {
   const { data } = answer;
-  const numeric = data.columns.filter((c) => c.type === "number").map((c) => c.name);
-  const yKeys = (view.yKeys || []).filter((c) => numeric.includes(c)).slice(0, 3);
-  const xKey = data.columns.some((c) => c.name === view.xKey) ? view.xKey : undefined;
-  if (!xKey || yKeys.length === 0 || data.rows.length < 2) return null;
-  const normalized = data.rows.slice(0, view.type === "pie" ? 8 : 40)
-    .map((row) => ({ ...row, ...Object.fromEntries([
-      ...yKeys.map((key) => [key, chartValue(row[key])]),
-      ...(view.type === "scatter" ? [[xKey, chartValue(row[xKey])]] : []),
-    ]) }));
+  const yKeys = view.yKeys.filter(key => data.columns.some(column => column.name === key)).slice(0, 4);
+  const xKey = view.xKey;
+  if (!data.columns.some(col => col.name === xKey) || !yKeys.length || !data.rows.length) return null;
   const kind = view.type;
+  if (kind === "card") {
+    const rows = data.rows.slice(0, data.rows.length === 1 ? 1 : 4);
+    return <section className="viz-card">
+      <div className="viz-heading"><span><BarChart3 size={16}/>{view.title}</span><span className="viz-hint">From returned data</span></div>
+      <div className="chart-card-grid">
+        {rows.flatMap((row, index) => (data.rows.length === 1 ? yKeys : yKeys.slice(0, 1)).map(key => (
+          <div className="chart-stat" key={index + ":" + key}>
+            <span className="chart-stat-label">{data.rows.length > 1 ? valueText(row[xKey]) : prettyLabel(key)}</span>
+            <strong>{valueText(row[key])}</strong>
+            {data.rows.length > 1 && <small>{prettyLabel(key)} · Row {index + 1}</small>}
+          </div>
+        )))}
+      </div>
+    </section>;
+  }
+  if (kind === "heatmap") return (
+    <section className="viz-card">
+      <div className="viz-heading"><span><BarChart3 size={16}/>{view.title}</span><span className="viz-hint">Value intensity</span></div>
+      <HeatmapView data={data} view={view}/>
+    </section>
+  );
+  if (data.rows.length < 2) return null;
+  const normalized = data.rows.slice(0, kind === "pie" || kind === "donut" ? 12 : 50)
+    .map(row => ({ ...row, ...Object.fromEntries([
+      ...yKeys.map(key => [key, chartNumber(row[key])]),
+      ...(kind === "scatter" ? [[xKey, chartNumber(row[xKey])]] : []),
+    ]) }));
+  const isBar = kind === "bar";
   return (
     <section className="viz-card">
-      <div className="viz-heading"><span><BarChart3 size={16}/> {view.title}</span><span className="viz-hint">Based on query results</span></div>
+      <div className="viz-heading"><span><BarChart3 size={16}/>{view.title}</span><span className="viz-hint">{kind.replace("-", " ").toUpperCase()}</span></div>
       <div className="chart-box">
         <ResponsiveContainer width="100%" height="100%">
-          {kind === "pie" ? (
-            <PieChart><Tooltip formatter={(value) => valueText(value)}/><Legend />
-              <Pie data={normalized} dataKey={yKeys[0]} nameKey={xKey} cx="50%" cy="48%" outerRadius="77%" innerRadius="52%" paddingAngle={2}>
-                {normalized.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]}/>)}
+          {kind === "pie" || kind === "donut" ? (
+            <PieChart>
+              <Tooltip formatter={value => valueText(value)}/>
+              <Legend verticalAlign="bottom"/>
+              <Pie data={normalized} dataKey={yKeys[0]} nameKey={xKey} cx="50%" cy="44%" outerRadius="74%"
+                innerRadius={kind === "donut" ? "49%" : 0} paddingAngle={kind === "donut" ? 2 : 0}>
+                {normalized.map((_, index) => <Cell key={index} fill={COLORS[index % COLORS.length]}/>)}
               </Pie>
             </PieChart>
           ) : kind === "scatter" ? (
-            <ScatterChart margin={{ top: 12, right: 22, left: 2, bottom: 10 }}>
+            <ScatterChart margin={{ top: 12, right: 25, left: 4, bottom: 10 }}>
               <CartesianGrid stroke="#edf0f2"/>
-              <XAxis type="number" dataKey={xKey} name={prettyLabel(xKey)} tick={{ fill: "#90949c", fontSize: 11 }}/>
-              <YAxis type="number" dataKey={yKeys[0]} name={prettyLabel(yKeys[0])} tick={{ fill: "#90949c", fontSize: 11 }}/>
+              <XAxis type="number" dataKey={xKey} name={prettyLabel(xKey)} tick={{ fill: "#90949c", fontSize: 10 }}/>
+              <YAxis type="number" dataKey={yKeys[0]} name={prettyLabel(yKeys[0])} tick={{ fill: "#90949c", fontSize: 10 }}/>
               <Tooltip cursor={{ strokeDasharray: "3 3" }}/>
               <Scatter data={normalized} fill={COLORS[0]} name={prettyLabel(yKeys[0])}/>
             </ScatterChart>
-          ) : kind === "area" ? (
-            <AreaChart data={normalized} margin={{ top: 8, right: 16, left: -12, bottom: 6 }}>
-              <CartesianGrid stroke="#edf0f2" vertical={false}/>
-              <XAxis dataKey={xKey} tick={{ fill: "#90949c", fontSize: 11 }} tickLine={false} axisLine={false} minTickGap={26} tickFormatter={(v) => String(v).slice(0, 10)}/>
-              <YAxis tick={{ fill: "#90949c", fontSize: 11 }} tickLine={false} axisLine={false} width={58}/>
-              <Tooltip formatter={(value) => valueText(value)}/>
+          ) : kind === "radar" ? (
+            <RadarChart data={normalized.slice(0, 14)} outerRadius="66%">
+              <PolarGrid stroke="#e8ebf0"/>
+              <PolarAngleAxis dataKey={xKey} tick={{ fill: "#818892", fontSize: 10 }}/>
+              <PolarRadiusAxis tick={{ fill: "#9ca3af", fontSize: 9 }}/>
+              <Tooltip formatter={value => valueText(value)}/>
               {yKeys.length > 1 && <Legend/>}
-              {yKeys.map((key, i) => <Area key={key} type="monotone" dataKey={key} stroke={COLORS[i]} fill={COLORS[i]} fillOpacity={0.12} strokeWidth={2.4}/>)}
+              {yKeys.map((key, i) => <Radar key={key} name={prettyLabel(key)} dataKey={key}
+                stroke={COLORS[i]} fill={COLORS[i]} fillOpacity={0.14}/>)}
+            </RadarChart>
+          ) : kind === "area" ? (
+            <AreaChart data={normalized} margin={{ top: 10, right: 18, left: 0, bottom: 7 }}>
+              <CartesianGrid stroke="#edf0f2" vertical={false}/>
+              <XAxis dataKey={xKey} tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false} minTickGap={25}
+                tickFormatter={v => String(v).slice(0, 12)}/>
+              <YAxis tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false} width={55}/>
+              <Tooltip formatter={value => valueText(value)}/>
+              {yKeys.length > 1 && <Legend/>}
+              {yKeys.map((key,i) => <Area key={key} type="monotone" dataKey={key}
+                stroke={COLORS[i]} fill={COLORS[i]} fillOpacity={0.12} strokeWidth={2.4}/>)}
             </AreaChart>
           ) : kind === "line" ? (
-            <LineChart data={normalized} margin={{ top: 8, right: 16, left: -12, bottom: 6 }}>
-              <CartesianGrid stroke="#edf0f2" vertical={false} />
-              <XAxis dataKey={xKey} tick={{ fill: "#90949c", fontSize: 11 }} tickLine={false} axisLine={false} minTickGap={26} tickFormatter={(v) => String(v).slice(0, 10)}/>
-              <YAxis tick={{ fill: "#90949c", fontSize: 11 }} tickLine={false} axisLine={false} width={58} />
-              <Tooltip formatter={(value) => valueText(value)} />
-              {yKeys.length > 1 && <Legend />}
-              {yKeys.map((key, i) => <Line key={key} type="monotone" dataKey={key} stroke={COLORS[i]} strokeWidth={2.6} dot={{ r: 2.5 }} activeDot={{ r: 5 }}/>)}
+            <LineChart data={normalized} margin={{ top: 10, right: 18, left: 0, bottom: 7 }}>
+              <CartesianGrid stroke="#edf0f2" vertical={false}/>
+              <XAxis dataKey={xKey} tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false} minTickGap={25}
+                tickFormatter={v => String(v).slice(0, 12)}/>
+              <YAxis tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false} width={55}/>
+              <Tooltip formatter={value => valueText(value)}/>
+              {yKeys.length > 1 && <Legend/>}
+              {yKeys.map((key,i) => <Line key={key} type="monotone" dataKey={key}
+                stroke={COLORS[i]} strokeWidth={2.6} dot={{ r: 2.5 }} activeDot={{ r: 4.5 }}/>)}
             </LineChart>
+          ) : kind === "combo" ? (
+            <ComposedChart data={normalized} margin={{ top: 10, right: 18, left: 0, bottom: 7 }}>
+              <CartesianGrid stroke="#edf0f2" vertical={false}/>
+              <XAxis dataKey={xKey} tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false}
+                tickFormatter={v => String(v).slice(0, 12)}/>
+              <YAxis tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false} width={55}/>
+              <Tooltip formatter={value => valueText(value)}/><Legend/>
+              <Bar dataKey={yKeys[0]} fill={COLORS[0]} radius={[4,4,0,0]} maxBarSize={46}/>
+              <Line type="monotone" dataKey={yKeys[1]} stroke={COLORS[1]} strokeWidth={2.4}/>
+            </ComposedChart>
           ) : (
-            <BarChart data={normalized} margin={{ top: 10, right: 16, left: -12, bottom: 6 }}>
-              <CartesianGrid stroke="#edf0f2" vertical={false} />
-              <XAxis dataKey={xKey} tick={{ fill: "#90949c", fontSize: 11 }} tickLine={false} axisLine={false} interval="preserveStartEnd" tickFormatter={(v) => String(v).slice(0, 17)}/>
-              <YAxis tick={{ fill: "#90949c", fontSize: 11 }} tickLine={false} axisLine={false} width={58}/>
-              <Tooltip formatter={(value) => valueText(value)}/>
-              {yKeys.length > 1 && <Legend />}
-              {yKeys.map((key, i) => <Bar key={key} dataKey={key} fill={COLORS[i]} radius={[4, 4, 0, 0]} maxBarSize={52}/>)}
+            <BarChart data={normalized} layout={isBar ? "vertical" : "horizontal"}
+              margin={{ top: 10, right: 18, left: isBar ? 10 : 0, bottom: 7 }}>
+              <CartesianGrid stroke="#edf0f2" vertical={!isBar} horizontal={isBar}/>
+              {isBar ? (
+                <>
+                  <XAxis type="number" tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false}/>
+                  <YAxis type="category" dataKey={xKey} width={110} tick={{ fill: "#90949c", fontSize: 10 }}
+                    tickFormatter={v => String(v).slice(0, 17)}/>
+                </>
+              ) : (
+                <>
+                  <XAxis type="category" dataKey={xKey} tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false}
+                    axisLine={false} tickFormatter={v => String(v).slice(0, 13)}/>
+                  <YAxis type="number" tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false} width={55}/>
+                </>
+              )}
+              <Tooltip formatter={value => valueText(value)}/>
+              {yKeys.length > 1 && <Legend/>}
+              {yKeys.map((key,i) => <Bar key={key} dataKey={key} fill={COLORS[i]}
+                stackId={kind === "stacked-column" ? "stack" : undefined}
+                radius={kind === "stacked-column" ? 0 : isBar ? [0,4,4,0] : [4,4,0,0]}
+                maxBarSize={46}/>)}
             </BarChart>
           )}
         </ResponsiveContainer>
@@ -160,52 +263,65 @@ function ChartView({ answer, view }: { answer: Answer; view: ChartSpec }) {
     </section>
   );
 }
+
+function ClarificationCustomInput({
+  disabled, onSubmit
+}: { disabled: boolean; onSubmit: (value: string) => void }) {
+  const [custom, setCustom] = useState("");
+  return (
+    <form className="clarification-custom" onSubmit={event => {
+      event.preventDefault();
+      const value = custom.trim();
+      if (!value || disabled) return;
+      onSubmit(value);
+      setCustom("");
+    }}>
+      <label>Or enter your own option</label>
+      <div className="clarification-custom-row">
+        <input aria-label="Custom clarification" value={custom} maxLength={260}
+          onChange={event => setCustom(event.target.value)}
+          placeholder="e.g. Show products rated 4.8 or higher" disabled={disabled}/>
+        <button type="submit" disabled={disabled || !custom.trim()}><ArrowRight size={16}/> Apply</button>
+      </div>
+    </form>
+  );
+}
+
 function AnswerCanvas({ answer, question }: { answer: Answer; question: string }) {
   const { data, report } = answer;
-  const metrics = data.rows.length === 1 ? data.columns.filter((c) => c.type === "number").slice(0, 5) : [];
-  const charts: ChartSpec[] = Array.isArray(report.visualizations) ? report.visualizations : [];
-  if (!charts.length && report.xKey && report.yKeys?.length && ["bar", "line", "pie", "area", "scatter"].includes(report.visualization)) {
-    charts.push({
-      type: report.visualization as ChartSpec["type"],
-      title: "Visual overview",
-      xKey: report.xKey,
-      yKeys: report.yKeys,
-    });
-  }
+  const charts = report.visualizations || [];
+  const explicit = requestedChartTypes(question);
   return (
     <div className="answer-canvas">
       <div className="answer-heading">
-        <div className="eyebrow"><Sparkles size={13}/> AI-POWERED ANALYSIS</div>
-        <h1>{report.title}</h1>
+        <div className="eyebrow"><Sparkles size={13}/> SQL-POWERED VISUALIZATIONS</div>
+        <h1>Analysis dashboard</h1>
         <p className="answer-question">{question}</p>
       </div>
-      <div className="answer-description">{report.summary}</div>
-      {metrics.length > 0 && (
-        <div className="metric-grid">
-          {metrics.map((col, i) => (
-            <div className="metric-card" key={col.name}>
-              <div className="metric-top"><span>{prettyLabel(col.name)}</span><span className="metric-dot" style={{ background: COLORS[i % COLORS.length] }}/></div>
-              <div className="metric-value">{valueText(data.rows[0][col.name])}</div>
-            </div>
-          ))}
+      {charts.length > 0 && (
+        <div className={"charts-grid " + (charts.length === 1 ? "single-chart" : "")}>
+          {charts.map((view, index) => <ChartView answer={answer} view={view} key={view.type + ":" + index}/>)}
         </div>
       )}
-      {charts.map((view, index) => <ChartView answer={answer} view={view} key={view.type + index}/>)}
+      {explicit.length > 0 && charts.length === 0 && (
+        <div className="chart-unavailable">
+          <CircleHelp size={17}/> The returned rows don't contain the dimensions or numeric values needed for
+          the requested {explicit.join(", ")} visualization. Results and executed SQL are shown below.
+        </div>
+      )}
       <section className="viz-card table-section">
-        <div className="viz-heading"><span><Table2 size={16}/> Query results <span className="count-chip">{data.rows.length}{data.truncated ? "+" : ""} rows</span></span></div>
-        {data.rows.length ? <DataTable data={data}/> : <div className="no-rows">No rows matched your question. Try adjusting the filters or time range.</div>}
-        {data.truncated && <p className="table-footnote">Preview is limited to the first 200 rows.</p>}
+        <div className="viz-heading">
+          <span><Table2 size={16}/> Query results <span className="count-chip">{data.rows.length}{data.truncated ? "+" : ""} rows</span></span>
+        </div>
+        {data.rows.length ? <DataTable data={data}/> : <div className="no-rows">No matching records were returned. Adjust your request or filters.</div>}
+        {data.truncated && <p className="table-footnote">Preview limited to the first 200 rows.</p>}
       </section>
-      <section className="analysis-card">
-        <div className="viz-heading"><span><FileText size={17}/> AI analysis report</span><span className="report-badge"><CheckCircle2 size={13}/> Database-backed</span></div>
-        {report.insights.length ? (
-          <div className="insight-list">{report.insights.map((item, index) => <div className="insight" key={index}><span className="insight-number">{String(index + 1).padStart(2, "0")}</span><p>{item}</p></div>)}</div>
-        ) : <p className="analysis-copy">{report.summary}</p>}
-        {report.caveats.length > 0 && <div className="caveat"><CircleHelp size={15}/><div>{report.caveats.join(" ")}</div></div>}
-        <details className="sql-disclosure" open>
-          <summary><span><Database size={15}/> View executed SQL</span><ChevronDown size={15}/></summary>
-          <pre>{answer.sql}</pre>
-        </details>
+      <section className="viz-card sql-results-panel">
+        <div className="viz-heading">
+          <span><Database size={16}/> Executed SQL</span>
+          <span className="sql-readonly-tag"><CheckCircle2 size={12}/> READ ONLY</span>
+        </div>
+        <pre className="executed-sql">{answer.sql}</pre>
       </section>
     </div>
   );
@@ -225,7 +341,7 @@ function QueryProgress({ progress }: { progress: Progress }) {
         <div className="progress-kicker"><span className="pulse-dot"/> LIVE QUERY EXECUTION</div>
         <h2>{progress.stage === "validated" ? "SQL validated" :
           progress.stage === "executing" ? "Executing your query" :
-          progress.stage === "report" ? "Preparing your analysis" :
+          progress.stage === "report" ? "Building your charts" :
           progress.stage === "planning" ? "Generating your SQL" :
           progress.stage === "checking" ? "Validating against your data" : "Exploring your database"}</h2>
         <p className="progress-subtitle">{progress.detail}</p>
@@ -470,6 +586,11 @@ export default function Home() {
   function selectClarification(option: string, query: string) {
     void askQuestion(query, option);
   }
+  function submitCustomOption(custom: string, original: string) {
+    const next = "CUSTOM CLARIFICATION: " + custom.slice(0, 260) +
+      "\nPRIOR REQUEST FOR CONTEXT: " + original.slice(0, 340);
+    void askQuestion(next, custom);
+  }
 
   return (
     <div className="app-root">
@@ -627,6 +748,8 @@ export default function Home() {
                           )}>{option}<ArrowRight size={15}/></button>
                         ))}
                       </div>
+                      <ClarificationCustomInput disabled={asking}
+                        onSubmit={text => submitCustomOption(text, activeClarification.originalQuestion)}/>
                     </div>
                   </div>
                 ) : analysisError ? (
@@ -666,11 +789,15 @@ export default function Home() {
                   <div className="message-content">
                     <div className="message-bubble">{message.text}</div>
                     {message.options && (
-                      <div className="clarification-options">{message.options.map((option) =>
-                        <button key={option} disabled={asking} onClick={() => selectClarification(option, message.optionQueries?.[message.options?.indexOf(option) ?? -1] || message.original + ". Clarification: " + option)}>
-                          {option}<ArrowRight size={14}/>
-                        </button>
-                      )}</div>
+                      <>
+                        <div className="clarification-options">{message.options.map((option) =>
+                          <button key={option} disabled={asking} onClick={() => selectClarification(option, message.optionQueries?.[message.options?.indexOf(option) ?? -1] || message.original + ". Clarification: " + option)}>
+                            {option}<ArrowRight size={14}/>
+                          </button>
+                        )}</div>
+                        <ClarificationCustomInput disabled={asking}
+                          onSubmit={text => submitCustomOption(text, message.original || "")}/>
+                      </>
                     )}
                   </div>
                 </div>

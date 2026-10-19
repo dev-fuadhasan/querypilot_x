@@ -64,7 +64,9 @@ export async function POST(request: NextRequest) {
           if (active.mode === "oauth") return managementReadOnly(active, sql);
           return (await executeQuery(active.dbUrl || "", sql)).rows;
         });
-        const exact = findExactNumericFilter(question, schema);
+        const effectiveQuestion = question.startsWith("CUSTOM CLARIFICATION:")
+          ? question.split("\nPRIOR REQUEST FOR CONTEXT:")[0] : question;
+        const exact = findExactNumericFilter(effectiveQuestion, schema);
         if (exact) {
           send({ type: "stage", stage: "checking", detail: "Checking the requested " + exact.column + " against real database values" });
           const check = async (sql: string) => {
@@ -116,7 +118,7 @@ export async function POST(request: NextRequest) {
           }
         }
         if (!data) throw new Error("Database query did not return a result.");
-        send({ type: "stage", stage: "report", detail: "Building visuals and checking evidence for the analysis report", sql });
+        send({ type: "stage", stage: "report", detail: "Preparing visualizations from the executed SQL results", sql });
         const report = await explainResult(question, sql, data);
         send({ type: "result", data, report, sql });
       } catch (err) {

@@ -142,3 +142,14 @@ QueryPilot X checks **explicit exact numeric filters** such as "products rating 
 The first version covers explicit numeric equality wording (rating, price, score and related metric columns). It does not promise to prevalidate every natural-language filter or every kind of date/category value yet. Database sampling and checks remain SELECT-only. If a probe itself fails, the app should report the error rather than invent available ranges.
 
 On every new question, the UI clears the prior analysis and shows the live query stages. Aborted or older requests are guarded against overwriting later responses. SQL is word-wrapped with no nested scrolling inside the code preview. Very long SQL or reports can still require scrolling the **main result pane** on a small screen, where content cannot physically fit at once.
+
+
+## Visualization-first dashboard (no AI analysis report)
+
+The **AI analysis report** card is deliberately removed from the workspace. The database query results and the **executed, SELECT-only SQL** remain visible as independent cards, with wrapped code and no nested SQL scrollbar.
+
+Chart selection is now determined from the user's explicit request after SQL has completed. The UI supports **line, vertical column, horizontal bar, pie, donut, area, scatter, radar, heatmap, KPI cards, stacked columns and combination charts**. A prompt can request multiple compatible chart types in one dashboard. If requested dimensions or numeric measures are not present, QueryPilot shows an explanatory message rather than substituting an unrelated chart.
+
+The AI continues generating safe SQL based on the connected database schema, but visualization selection uses a deterministic, schema/result-aware layer. This also eliminates a second AI narrative generation call, improving latency and reducing exposure of returned rows to external model providers.
+
+When QueryPilot asks the user to select from AI-proposed or dataset-validated alternatives, **both the chat and the left workspace** provide a text field for a custom option. Custom clarification is treated as the newer, overriding instruction; the original question is retained only for context, preventing an invalid previous exact-number filter from being reapplied during the data check.
