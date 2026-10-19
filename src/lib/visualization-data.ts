@@ -46,7 +46,7 @@ export function prepareHorizontalBars(data: ResultData, view: ChartSpec): BarDis
   }).filter((row): row is {label: string;value: number} => row !== null);
   if (!valid.length) return null;
   const largest = Math.max(...valid.map(row => row.value));
-  const namedPercent = /(?:percent|percentage|rate_pct|_pct|_percent)$/i.test(key) || /\(\s*%\s*\)/.test(view.title);
+  const namedPercent = view.unit === "%" || /(?:percent|percentage|rate_pct|_pct|_percent)$/i.test(key) || /\(\s*%\s*\)/.test(view.yLabel || view.title);
   const isPercentage = namedPercent && largest <= 100;
   const axisMaximum = isPercentage ? 100 : niceMaximum(largest);
   const visible = valid.slice(0, 20);
@@ -64,8 +64,8 @@ export function prepareHorizontalBars(data: ResultData, view: ChartSpec): BarDis
         new Intl.NumberFormat("en-US", { maximumFractionDigits: 2, notation: axisMaximum >= 10000 ? "compact" : "standard" }).format(axisMaximum * part)
     })),
     isPercentage, axisMaximum,
-    axisLabel: isPercentage ? "Rate (%)" : pretty(key),
-    categoryLabel: pretty(view.xKey),
+    axisLabel: view.yLabel || (isPercentage ? "Rate (%)" : pretty(key)),
+    categoryLabel: view.xLabel || pretty(view.xKey),
     clipped: Math.max(0, valid.length - visible.length)
   };
 }
