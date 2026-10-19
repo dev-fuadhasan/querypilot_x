@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { formatDisplayValue } from "../src/lib/format-values.ts";
+import { resultToData } from "../src/lib/table-routing.ts";
 
 const decimal = { name: "rate", type: "number", numericKind: "decimal" };
 const integer = { name: "passengers", type: "number", numericKind: "integer" };
@@ -34,4 +35,19 @@ test("counts and text identifiers are not made fractional or corrupted", () => {
 test("numeric-looking text from a new project's measurement column is formatted", () => {
   assert.equal(formatDisplayValue("4.10000000000000", { name: "rating", type: "text" }), "4.10");
   assert.equal(formatDisplayValue("1.2000000", { name: "product_code", type: "text" }), "1.2000000");
+});
+
+test("new OAuth projects infer decimal columns from rows without specific table names", () => {
+  const result = resultToData([
+    { measurement: "1.00000000000000000000", count: 7, customer_id: "00027" },
+    { measurement: "2.34500000000000000000", count: 8, customer_id: "00028" },
+  ]);
+  const measurement = result.columns.find(column => column.name === "measurement");
+  const count = result.columns.find(column => column.name === "count");
+  assert.equal(measurement?.numericKind, "decimal");
+  assert.equal(count?.numericKind, "integer");
+  assert.equal(formatDisplayValue(result.rows[0].measurement, measurement), "1.00");
+  assert.equal(formatDisplayValue(result.rows[1].measurement, measurement), "2.35");
+  assert.equal(formatDisplayValue(result.rows[0].count, count), "7");
+  assert.equal(formatDisplayValue(result.rows[0].customer_id, result.columns.find(column => column.name === "customer_id")), "00027");
 });
