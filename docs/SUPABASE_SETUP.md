@@ -203,3 +203,14 @@ When verified SQL returns group_name, positive, total, and rate_pct, the dashboa
 Single-chart results now show the executed SQL once in its main section rather than repeating the same SQL in two cards. Multi-chart results continue to provide each chart's SQL separately. Other interactive chart types continue to use Recharts. Adding a separate Matplotlib or Seaborn backend is not necessary for responsive, accessible UI charts, but could be considered later for high-resolution publication exports.
 
 Tests verify chart category counts, precise percentage labels, axis scales, responsive series data and honest failure handling for missing numeric values. Visual appearance must still be tested on the deployed application, especially across screen sizes.
+
+
+## Selected-table authority and follow-up context
+
+The table selector is the source of truth for SQL analysis. Choosing a table restricts the approved schema and execution to that table; a fuzzy classifier is not allowed to override the selection or demand switching to All tables. In All tables mode the backend still resolves unambiguous outcome relationships against the relevant authorized dataset rather than using unrelated first-table fields.
+
+An outcome-rate relationship such as "find out relation with survival rate" inspects the scoped public schema for an existing 0/1 or boolean outcome. The backend verifies actual binary observations, and, when the grouping dimension is missing, lists only nonempty, varying, non-sensitive fields of the outcome table. Choices include a fully scoped follow-up question; no unrelated prices from other tables. For numeric dimensions with more than 12 distinct values, a subsequent selection creates five nonoverlapping data-derived bands, with each group's actual denominator and positive outcome count. This is descriptive association, not proof of causation.
+
+Clarification context is preserved when the user enters a short reply (for example, "age") either in the custom option field or directly in chat. Independently worded new questions are not forced to inherit the clarification. On table selection, starter questions are filtered by that selected table, and switching scope clears old results and clarifications.
+
+The implementation is schema-driven, so the same logic applies to independent clients' projects with different tables and outcome columns. If multiple tables contain the same matching outcome in All tables mode, QueryPilot asks which table to use rather than silently selecting the first. Complex nonbinary statistical relationships still require the guarded general SQL planner. As always, a successful build does not replace end-to-end testing against the deployed OAuth connection.

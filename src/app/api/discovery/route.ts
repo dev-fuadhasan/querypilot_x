@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { executeQuery, getSchema } from "@/lib/database";
 import { ensureOAuthSession, getOAuthSchema, managementReadOnly } from "@/lib/management";
-import { inspectProject } from "@/lib/intelligence";
+import { inspectProject, starterQuestions } from "@/lib/intelligence";
 import { readSession, saveSession } from "@/lib/session";
 
 export const runtime = "nodejs";
@@ -23,7 +23,10 @@ export async function GET() {
       : (await executeQuery(active.dbUrl || "", sql)).rows);
     const response = NextResponse.json({
       ...profile,
-      catalog: schema.map(table => ({ name: table.name, columns: table.columns.length }))
+      catalog: schema.map(table => ({ name: table.name, columns: table.columns.length })),
+      startersByTable: Object.fromEntries(profile.tables.map(table => [
+        table.name, starterQuestions([table])
+      ]))
     }, { headers: { "Cache-Control": "private, no-store" } });
     if (access.refreshed) {
       const { issuedAt: _previous, ...current } = active;

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { initialProjectRef, resolveStartupPhase } from "@/lib/connection-flow";
 import { requestedChartTypes } from "@/lib/charts";
 import { prepareHorizontalBars, rateHighlights } from "@/lib/visualization-data";
+import { contextualizeClarification, shouldUseClarificationContext } from "@/lib/clarification-context";
 import { formatDisplayValue } from "@/lib/format-values";
 import type { ChartSpec } from "@/lib/charts";
 import {
@@ -477,6 +478,7 @@ function nextMessage() { messageCounter += 1; return messageCounter; }
 export default function Home() {
   const [session, setSession] = useState<SessionStatus | null>(null);
   const [starters, setStarters] = useState<string[]>([]);
+  const [startersByTable, setStartersByTable] = useState<Record<string,string[]>>({});
   const [starterLoading, setStarterLoading] = useState(false);
   const [starterNote, setStarterNote] = useState("");
   const [tableCatalog, setTableCatalog] = useState<{name: string; columns: number}[]>([]);
@@ -501,6 +503,7 @@ export default function Home() {
   const [toast, setToast] = useState<{ text: string; error?: boolean } | null>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const visibleStarters = tableScope === "all" ? starters : (startersByTable[tableScope] || []);
   function notify(text: string, error = false) {
     setToast({ text, error });
     if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -527,9 +530,10 @@ export default function Home() {
     return () => { active = false; };
   }, []);
   useEffect(() => {
-    if (!session?.connected) { setStarters([]); setTableCatalog([]); setTableScope("all"); setStarterNote(""); setStarterLoading(false); return; }
+    if (!session?.connected) { setStarters([]); setStartersByTable({}); setTableCatalog([]); setTableScope("all"); setStarterNote(""); setStarterLoading(false); return; }
     const controller = new AbortController();
     setStarters([]);
+    setStartersByTable({});
     setTableCatalog([]);
     setTableScope("all");
     setStarterNote("");
@@ -537,11 +541,15 @@ export default function Home() {
     fetch("/api/discovery", { signal: controller.signal, cache: "no-store" })
       .then(async response => {
         if (!response.ok) throw new Error("Cannot inspect this project's data right now.");
-        return await response.json() as { starters?: string[]; catalog?: {name:string;columns:number}[]; note?: string };
+        return await response.json() as { starters?: string[]; startersByTable?: Record<string,string[]>; catalog?: {name:string;columns:number}[]; note?: string };
       })
       .then(data => {
         if (!controller.signal.aborted) {
           setStarters(Array.isArray(data.starters) ? data.starters.filter(item => typeof item === "string").slice(0, 5) : []);
+          setStartersByTable(data.startersByTable && typeof data.startersByTable === "object" ?
+            Object.fromEntries(Object.entries(data.startersByTable).map(([name,items]) => [
+              name, Array.isArray(items) ? items.filter((item): item is string => typeof item === "string").slice(0,5) : []
+            ])) : {});
           setTableCatalog(Array.isArray(data.catalog) ? data.catalog.filter(item => typeof item.name==="string") : []);
           setStarterNote(data.note || "");
         }
@@ -632,6 +640,9 @@ export default function Home() {
   async function askQuestion(text: string, displayText?: string) {
     const prompt = text.trim();
     if (!prompt || asking || !session?.connected) return;
+    const effective = activeClarification && shouldUseClarificationContext(prompt) &&
+      !prompt.startsWith("CUSTOM CLARIFICATION:") ?
+      contextualizeClarification(prompt, activeClarification.originalQuestion) : prompt;
     const requestId = ++requestIdRef.current;
     requestAbortRef.current?.abort();
     const controller = new AbortController();
@@ -651,7 +662,7 @@ export default function Home() {
         method: "POST", headers: { "Content-Type": "application/json" },
         signal: controller.signal,
         cache: "no-store",
-        body: JSON.stringify({ question: prompt, tableScope }),
+        body: JSON.stringify({ question: effective, tableScope }),
       });
       if (!isLatest()) return;
       if (!response.ok) {
@@ -719,9 +730,7 @@ export default function Home() {
     void askQuestion(query, option);
   }
   function submitCustomOption(custom: string, original: string) {
-    const next = "CUSTOM CLARIFICATION: " + custom.slice(0, 260) +
-      "\nPRIOR REQUEST FOR CONTEXT: " + original.slice(0, 340);
-    void askQuestion(next, custom);
+    void askQuestion(contextualizeClarification(custom, original), custom);
   }
 
   return (
@@ -900,7 +909,7 @@ export default function Home() {
                           )}>{option}<ArrowRight size={15}/></button>
                         ))}
                       </div>
-                      <ClarificationCustomInput disabled={asking} example={activeClarification.example || starters[0]}
+                      <ClarificationCustomInput disabled={asking} example={activeClarification.example || visibleStarters[0]}
                         onSubmit={text => submitCustomOption(text, activeClarification.originalQuestion)}/>
                     </div>
                   </div>
@@ -933,8 +942,9 @@ export default function Home() {
               {messages.length === 0 && (
                 <div className="suggestions" aria-live="polite">
                   {starterLoading ? <div className="starter-checking"><LoaderCircle size={15} className="spin"/> Checking available questions in this project…</div> :
-                    starters.length ? starters.map(example => <button key={example} onClick={() => askQuestion(example)} disabled={asking}>{example}<ArrowUpRight size={15}/></button>) :
-                    <div className="starter-checking">{starterNote || "No dataset-verified starter questions are available. Ask about one of your project tables."}</div>}
+                    visibleStarters.length ? visibleStarters.map(example => <button key={example} onClick={() => askQuestion(example)} disabled={asking}>{example}<ArrowUpRight size={15}/></button>) :
+                    <div className="starter-checking">{tableScope === "all" ? (starterNote || "No dataset-verified starter questions are available. Ask about a readable table.") :
+                      "No verified starter prompts are available for " + tableScope + ". You can still ask about its columns."}</div>}
                 </div>
               )}
               {messages.map((message) => (
@@ -949,7 +959,7 @@ export default function Home() {
                             {option}<ArrowRight size={14}/>
                           </button>
                         )}</div>
-                        <ClarificationCustomInput disabled={asking} example={message.example || starters[0]}
+                        <ClarificationCustomInput disabled={asking} example={message.example || visibleStarters[0]}
                           onSubmit={text => submitCustomOption(text, message.original || "")}/>
                       </>
                     )}

@@ -12,6 +12,7 @@ import type { ChartKind } from "@/lib/charts";
 import { SqlValidationError } from "@/lib/sql-guard";
 import { resolveTableScope, simpleRequest, identifyQuestionTable } from "@/lib/table-routing";
 import { planVerifiedBinaryRate } from "@/lib/rate-analysis";
+import { relationshipAnalysis } from "@/lib/relationship-analysis";
 import { recognizeEntityTrend, recognizeTopRanking, temporalTrendQuery, pivotTemporalTrend, missingTrendChoices, topRankingSql } from "@/lib/trend";
 
 export const runtime = "nodejs";
@@ -72,15 +73,8 @@ export async function POST(request: NextRequest) {
         const discovered = active.mode === "oauth" ? await getOAuthSchema(active) : await getSchema(active.dbUrl || "");
         if (!discovered.length) throw new Error("No readable public tables were found in the connected project.");
         const scopedTables = resolveTableScope(tableScope, discovered);
-        if (tableScope !== "all") {
-          const mentioned = identifyQuestionTable(question, discovered);
-          if (mentioned.length === 1 && mentioned[0].name !== tableScope) {
-            send({ type: "error", error: "Your question refers to " + mentioned[0].name +
-              ", but your current table selection is " + tableScope +
-              ". Select " + mentioned[0].name + " or All tables from the table selector." });
-            return;
-          }
-        }
+        // Explicit table scope is authoritative. A fuzzy language router must not
+        // override a user-selected table or instruct them to switch to All tables.
         const relevant = tableScope === "all" ? identifyQuestionTable(question, scopedTables) : [];
         const approvedTables = relevant.length === 1 ? relevant : scopedTables;
         send({ type: "stage", stage: "schema", detail: "Using " + approvedTables.length + " selected/readable table(s) from " + discovered.length + " in this project" });
@@ -88,6 +82,37 @@ export async function POST(request: NextRequest) {
           if (active.mode === "oauth") return managementReadOnly(active, sql);
           return (await executeQuery(active.dbUrl || "", sql)).rows;
         });
+        // Derive association dimensions and outcome from the scoped, verified schema.
+        // This runs before generic AI clarification to prevent unrelated dataset options.
+        const relationship = await relationshipAnalysis(question, schema, async (sql) => {
+          const approved = guardSql(sql);
+          enforceTables(approved, schema);
+          return active.mode === "oauth"
+            ? managementReadOnly(active, approved)
+            : (await executeQuery(active.dbUrl || "", approved)).rows;
+        });
+        if (relationship?.action === "clarify") {
+          send({ type:"clarification", question:relationship.question, options:relationship.options,
+            optionQueries:relationship.optionQueries, example:relationship.example,
+            originalQuestion:question });
+          return;
+        }
+        if (relationship?.action === "query") {
+          const sql = guardSql(relationship.sql);
+          enforceTables(sql, schema);
+          send({ type:"stage", stage:"executing", detail:"Analyzing observed relationship from " +
+            (tableScope === "all" ? "the matching table" : String(tableScope)), sql });
+          const data = active.mode === "oauth"
+            ? await executeOAuthQuery(active, sql)
+            : await executeQuery(active.dbUrl || "", sql);
+          const report = await explainResult(question, sql, data);
+          const panels = data.rows.length ? [{
+            kind:relationship.chart.kind, title:relationship.title, data, sql,
+            xKey:relationship.chart.xKey, yKeys:relationship.chart.yKeys
+          }] : [];
+          send({ type:"result", data, report, sql, panels });
+          return;
+        }
         // Compare rates only after verifying the requested outcome is genuinely binary
         // and the grouping field contains actual categories in this connected project.
         const verifiedRate = await planVerifiedBinaryRate(question, schema, async sql => {
@@ -304,7 +329,9 @@ export async function POST(request: NextRequest) {
         else if (/Supabase|permission|read.only|connection|connect|database|query timeout|statement timeout|schema|column|relation/i.test(message))
           explanation = "Database query failed: " + message.slice(0, 250);
         else if (/SQL|SELECT|syntax|unsupported operation/i.test(message)) explanation = message.slice(0, 250);
-        send({ type: "error", error: explanation + " Verify your selected table, or switch to All tables." });
+        send({ type: "error", error: explanation +
+          (tableScope === "all" ? " Try naming the target table and measure." :
+            " QueryPilot kept your selected-table scope; verify the requested fields exist in that table.") });
       } finally {
         if (!closed) try { controller.close(); } catch { /* client disconnected */ }
       }

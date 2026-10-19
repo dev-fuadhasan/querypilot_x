@@ -38,6 +38,8 @@ jobs:
         run: node --experimental-strip-types --test tests/visualization-data.test.mjs
       - name: Decimal result formatting regression tests
         run: node --experimental-strip-types --test tests/format-values.test.mjs
+      - name: Scoped relationship analysis and contextual follow-up regression tests
+        run: node --experimental-strip-types --test tests/relationship-analysis.test.mjs
       - name: Type-check
         run: npm run typecheck
       - name: Production build
