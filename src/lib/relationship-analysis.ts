@@ -4,9 +4,12 @@ import { quoteTableId } from "./table-routing";
 
 type Row = Record<string,unknown>;
 type Reader = (sql: string) => Promise<Row[]>;
+export type RelationshipIntent = {kind:"binary-rate"; table:string; outcome:string; dimension?:string};
 export type RelationshipResponse =
-  | { action:"clarify"; question:string; options:string[]; optionQueries:string[]; example?:string }
-  | { action:"query"; sql:string; title:string; chart:{kind:ChartKind;xKey:string;yKeys:string[]} };
+  | {action:"clarify"; question:string; options:string[]; optionQueries:string[];
+      optionIntents?:RelationshipIntent[]; contextIntent?:RelationshipIntent; example?:string}
+  | {action:"query"; sql:string; title:string; chart:{kind:ChartKind;xKey:string;yKeys:string[]}}
+  | {action:"issue"; message:string};
 type Candidate = {table:TableInfo; outcome:string; type:string};
 function tokens(s:string):string[] { return s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean); }
 function distance(a:string,b:string):number {
@@ -69,52 +72,116 @@ function outcomeOptions(table:TableInfo,subject:string,variableNames:string[]){
   const name=subject.replace(/_/g," ");
   return variableNames.map(col=>({
     label:col.replace(/_/g," ")+" versus "+name+" rate",
-    question:"Compare "+name+" rate by "+col+" in public."+table.name+
-      ". For continuous numeric columns use non-overlapping numeric ranges, not individual values."
+    question:"Compare "+name+" rate by "+col+" in public."+table.name,
+    intent:{kind:"binary-rate" as const, table:table.name, outcome:subject, dimension:col}
   }));
 }
+function isVerifiedIntent(value:unknown):value is RelationshipIntent {
+  if(!value || typeof value!=="object")return false;
+  const obj=value as Record<string,unknown>;
+  return obj.kind==="binary-rate" && typeof obj.table==="string" && typeof obj.outcome==="string" &&
+    (obj.dimension===undefined || typeof obj.dimension==="string") &&
+    obj.table.length<=128 && obj.outcome.length<=128 && (obj.dimension===undefined || obj.dimension.length<=128);
+}
+function rateMentionScore(question:string,outcome:string):number {
+  const wordsOfOutcome=[outcome.replace(/_/g," "),...(LABELS[outcome.toLowerCase()]||[])];
+  const wordsInQuestion=tokens(question);
+  let score=0;
+  for(const name of wordsOfOutcome) {
+    const parts=tokens(name);
+    for(let i=0;i<wordsInQuestion.length;i++){
+      if(!parts.some(p=>p===wordsInQuestion[i]||(p.length>=5 && wordsInQuestion[i].length>=5 && distance(p,wordsInQuestion[i])<=2)))continue;
+      if(["rate","rates","percentage","probability","proportion"].includes(wordsInQuestion[i+1]))score=Math.max(score,20);
+      if(wordsInQuestion[i-1]==="of" && ["rate","rates","percentage"].includes(wordsInQuestion[i-2]))score=Math.max(score,20);
+    }
+  }
+  return score;
+}
 export async function relationshipAnalysis(
-  question:string, schema:TableInfo[], read:Reader
+  question:string, schema:TableInfo[], read:Reader, requestedIntent?:unknown
 ):Promise<RelationshipResponse|null>{
-  if(!probabilityIntent(question))return null;
-  const matches:Candidate[]=schema.flatMap(table=>table.columns.filter(col=>
-    numericType(col.type)&&matchOutcome(question,col.name)).map(col=>
-      ({table,outcome:col.name,type:col.type})));
-  if(matches.length>1){
-    const choices=matches.slice(0,6).map(item=>({
+  const hasIntent=requestedIntent!==undefined && requestedIntent!==null;
+  if(hasIntent && !isVerifiedIntent(requestedIntent))
+    return {action:"issue",message:"The previous selection is no longer valid. Choose a new analysis from the connected table."};
+  const intent=hasIntent ? requestedIntent as RelationshipIntent : null;
+  if(!intent && !probabilityIntent(question))return null;
+
+  const candidates:Candidate[] = intent
+    ? schema.filter(table=>table.name===intent.table).flatMap(table=>
+        table.columns.filter(col=>col.name===intent.outcome && numericType(col.type)).map(col=>
+          ({table,outcome:col.name,type:col.type})))
+    : schema.flatMap(table=>table.columns.filter(col=>
+        numericType(col.type)&&matchOutcome(question,col.name)).map(col=>
+        ({table,outcome:col.name,type:col.type})));
+  if(intent && candidates.length!==1)
+    return {action:"issue",message:"The selected outcome or table is not available in your current authorized table scope."};
+  if(!candidates.length)return null;
+
+  // Validate candidate outcomes against actual 0/1 or boolean observations.
+  // Mentioning a numeric *dimension* (e.g. Fare) must not make it a rate outcome.
+  const verified:Candidate[]=[];
+  for(const candidate of candidates.slice(0,8)){
+    const from="public."+quoteTableId(candidate.table.name);
+    const col=quoteTableId(candidate.outcome);
+    const observed=await read("SELECT COUNT(*) FILTER (WHERE "+col+" IS NOT NULL)::integer AS present, "+
+      "COUNT(*) FILTER (WHERE "+col+" IS NOT NULL AND "+
+      outcomeNumber(candidate.outcome,candidate.type)+" NOT IN (0,1))::integer AS invalid FROM "+from);
+    if(Number(observed[0]?.present)>0 && Number(observed[0]?.invalid)===0)verified.push(candidate);
+  }
+  if(intent && !verified.length)
+    return {action:"issue",message:"The selected outcome no longer contains a supported binary (0/1 or boolean) measure."};
+  if(!verified.length)return null;
+
+  const topScore=Math.max(...verified.map(item=>rateMentionScore(question,item.outcome)));
+  const scored=topScore>0 ? verified.filter(item=>rateMentionScore(question,item.outcome)===topScore):verified;
+  if(scored.length>1){
+    const choices=scored.slice(0,6).map(item=>({
       label:item.table.name+" · "+item.outcome.replace(/_/g," ")+" rate",
-      query:"Analyze the relationship with "+item.outcome.replace(/_/g," ")+
-        " rate specifically in public."+item.table.name
+      query:"Analyze "+item.outcome.replace(/_/g," ")+" rate in public."+item.table.name,
+      intent:{kind:"binary-rate" as const,table:item.table.name,outcome:item.outcome}
     }));
     return {action:"clarify",
-      question:"More than one authorized table has a matching outcome. Select the dataset to analyze:",
-      options:choices.map(c=>c.label),optionQueries:choices.map(c=>c.query),example:choices[0]?.query};
+      question:"More than one verified binary outcome matches your question. Select the table and outcome:",
+      options:choices.map(c=>c.label),optionQueries:choices.map(c=>c.query),
+      optionIntents:choices.map(c=>c.intent),example:choices[0]?.query};
   }
-  if(matches.length!==1)return null;
-  const {table,outcome,type}=matches[0];
+  const {table,outcome,type}=scored[0];
   const tableSql="public."+quoteTableId(table.name);
   const outcomeSql=quoteTableId(outcome);
-  const binary=await read("SELECT COUNT(*) FILTER (WHERE "+outcomeSql+" IS NOT NULL)::integer AS present, "+
-    "COUNT(*) FILTER (WHERE "+outcomeSql+" IS NOT NULL AND "+outcomeNumber(outcome,type)+" NOT IN (0,1))::integer AS invalid "+
-    "FROM "+tableSql);
-  if(!binary.length||Number(binary[0].present)<=0||Number(binary[0].invalid)!==0)return null;
   const columns=possibleDimensions(table,outcome);
-  if(!columns.length)return null;
-  // User can ask without a named dimension. Do not guess a misleading relationship.
-  const selected=columns.filter(c=>similar(question,c.name.replace(/_/g," ")) ||
-    (/(?:^|_)(sex|gender)(?:_|$)/i.test(c.name) && /\b(male|female|men|women)\b/i.test(question)));
+  if(!columns.length)return {action:"issue",message:"No safe comparison fields are available alongside this outcome."};
+
+  // For custom text, resolve only the new answer as a dimension. Preserve the
+  // original question as context; never re-detect its outcome from that answer.
+  const questionFocus=question.startsWith("CUSTOM CLARIFICATION:")
+    ? question.split("\n")[0].replace(/^CUSTOM CLARIFICATION:\s*/,"") : question;
+  const specified=intent?.dimension;
+  const selected=specified
+    ? columns.filter(c=>c.name===specified)
+    : columns.filter(c=>similar(questionFocus,c.name.replace(/_/g," ")) ||
+        (/(?:^|_)(sex|gender)(?:_|$)/i.test(c.name) && /\b(male|female|men|women)\b/i.test(questionFocus)));
+  if(specified && selected.length!==1)
+    return {action:"issue",message:"The selected comparison field is unavailable in the current authorized table."};
+
   if(selected.length!==1){
-    // Check non-null observations before suggesting dimensions; don't invent options.
+    // Suggest only actual fields containing at least two distinct non-null values.
     const visible=columns.slice(0,10);
-    const aggregates=visible.map((c,i)=>"COUNT(DISTINCT "+quoteTableId(c.name)+")::integer AS "+quoteTableId("field_"+i));
+    const aggregates=visible.map((c,i)=>
+      "COUNT(DISTINCT "+quoteTableId(c.name)+")::integer AS "+quoteTableId("field_"+i));
     const availability=await read("SELECT "+aggregates.join(", ")+" FROM "+tableSql+
       " WHERE "+outcomeSql+" IS NOT NULL");
     const supported=visible.filter((c,i)=>Number(availability[0]?.["field_"+i])>1);
     const choices=outcomeOptions(table,outcome,supported.map(c=>c.name).slice(0,6));
-    return {action:"clarify",question: selected.length>1?
-      "Several fields could explain "+outcome.replace(/_/g," ")+" in "+table.name+". Choose one relationship:":
-      "Which field should I compare with "+outcome.replace(/_/g," ")+" rate in "+table.name+"? These fields exist in the selected dataset:",
-      options:choices.map(o=>o.label),optionQueries:choices.map(o=>o.question),example:choices[0]?.question};
+    if(!choices.length)
+      return {action:"issue",message:"The outcome is available, but no comparison field contains enough observations."};
+    return {action:"clarify",
+      question:selected.length>1 ?
+        "Several fields match that request. Choose the comparison dimension:" :
+        "Which field should I compare with "+outcome.replace(/_/g," ")+" rate in "+table.name+"?",
+      options:choices.map(c=>c.label),optionQueries:choices.map(c=>c.question),
+      optionIntents:choices.map(c=>c.intent),
+      contextIntent:{kind:"binary-rate",table:table.name,outcome},
+      example:choices[0]?.question};
   }
   const variable=selected[0];
   const group=quoteTableId(variable.name);

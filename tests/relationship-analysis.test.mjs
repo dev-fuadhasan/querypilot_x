@@ -119,3 +119,85 @@ test("ambiguous outcome across multiple tables asks which authorized table to us
  assert.ok(ans.options[0].includes("titanic_data"));
  assert.ok(ans.options[1].includes("other_passengers"));
 });
+
+
+test("a verified Fare-vs-Survived choice executes directly rather than treating Fare as another outcome",async()=>{
+ const first=await relationshipAnalysis("find out relation wwith survibal rate",schema,reader());
+ assert.equal(first.action,"clarify");
+ const idx=first.options.findIndex(label=>/^Fare versus Survived rate/.test(label));
+ assert.ok(idx>=0);
+ assert.deepEqual(first.optionIntents[idx],{
+   kind:"binary-rate",table:"titanic_data",outcome:"Survived",dimension:"Fare"
+ });
+ const follow=await relationshipAnalysis(first.optionQueries[idx],schema,reader(),first.optionIntents[idx]);
+ assert.equal(follow.action,"query");
+ assert.match(follow.sql,/FROM public\."titanic_data"/);
+ assert.match(follow.sql,/WHERE "Fare" IS NOT NULL/);
+ assert.match(follow.sql,/COUNT\(\*\) FILTER \(WHERE "Survived" = 1\)/);
+ assert.match(follow.sql,/rate_pct/);
+ assert.equal(parse(follow.sql)[0].type,"select");
+});
+test("old text-only choices also identify the verified outcome, never a continuous Fare outcome",async()=>{
+ const follow=await relationshipAnalysis("Fare versus Survived rate",schema,async sql=>{
+   if(sql.includes('AS present')&&sql.includes('"Fare"'))return [{present:891,invalid:850}];
+   return reader()(sql);
+ });
+ assert.equal(follow.action,"query");
+ assert.match(follow.sql,/COUNT\(\*\) FILTER \(WHERE "Survived" = 1\)/);
+});
+test("a short custom Fare answer is resolved as a dimension while keeping original outcome locked",async()=>{
+ const first=await relationshipAnalysis("relationship with survival rate",schema,reader());
+ assert.equal(first.action,"clarify");
+ const intent=first.contextIntent;
+ assert.deepEqual(intent,{kind:"binary-rate",table:"titanic_data",outcome:"Survived"});
+ const prompt=contextualizeClarification("Fare","find out relation wwith survibal rate");
+ const follow=await relationshipAnalysis(prompt,schema,reader(),intent);
+ assert.equal(follow.action,"query");
+ assert.match(follow.sql,/"Fare"/);
+ assert.match(follow.sql,/"Survived"/);
+});
+test("outcome selection in All tables mode is a bounded two-step process with no loop",async()=>{
+ const second={...titanic,name:"other_passengers"};
+ const full=[titanic,second];
+ const first=await relationshipAnalysis("relationship with survival rate",full,reader());
+ assert.equal(first.action,"clarify");
+ assert.equal(first.optionIntents.length,2);
+ const secondResult=await relationshipAnalysis(first.optionQueries[1],full,reader(),first.optionIntents[1]);
+ assert.equal(secondResult.action,"clarify");
+ assert.ok(secondResult.options.every(label=>!label.includes("titanic_data")));
+ const third=await relationshipAnalysis(secondResult.optionQueries[0],full,reader(),secondResult.optionIntents[0]);
+ assert.equal(third.action,"query");
+ assert.match(third.sql,/FROM public\."other_passengers"/);
+});
+test("out-of-scope or fabricated structured selections are not sent to the AI planner",async()=>{
+ let reads=0;
+ const x=await relationshipAnalysis("Fare versus Survived rate",[sales],async()=>{reads++;return []},
+   {kind:"binary-rate",table:"titanic_data",outcome:"Survived",dimension:"Fare"});
+ assert.equal(x.action,"issue");
+ assert.equal(reads,0);
+ const y=await relationshipAnalysis("Fare versus Survived rate",[titanic],async()=>{reads++;return []},
+   {kind:"binary-rate",table:"titanic_data",outcome:"Survived",dimension:"not_a_column"});
+ assert.equal(y.action,"issue");
+ assert.equal(reads,1); // one bounded binary validation probe
+});
+test("fields in another company's schema remain dynamic rather than Titanic-specific",async()=>{
+ const other={name:"orders",columns:[
+   {name:"approved",type:"boolean"},{name:"territory",type:"text"},
+   {name:"spend",type:"numeric"},{name:"account_id",type:"integer"}
+ ]};
+ const read=async sql=>{
+   if(sql.includes("AS present"))return [{present:150,invalid:0}];
+   if(sql.includes("AS distinct_count"))return [{distinct_count:50,minimum:10,maximum:500}];
+   if(sql.includes("AS field_")||sql.includes('AS "field_'))return [{field_0:5,field_1:50}];
+   throw Error(sql);
+ };
+ const first=await relationshipAnalysis("find relationship with approval rate",[other],read);
+ assert.equal(first.action,"clarify");
+ assert.ok(first.options.some(o=>o.includes("spend")));
+ const idx=first.options.findIndex(o=>o.includes("spend"));
+ const result=await relationshipAnalysis(first.optionQueries[idx],[other],read,first.optionIntents[idx]);
+ assert.equal(result.action,"query");
+ assert.match(result.sql,/public\."orders"/);
+ assert.match(result.sql,/CASE WHEN "approved" THEN 1 ELSE 0 END/);
+ assert.match(result.sql,/"spend"/);
+});

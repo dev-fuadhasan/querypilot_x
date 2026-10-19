@@ -5,6 +5,7 @@ import { initialProjectRef, resolveStartupPhase } from "@/lib/connection-flow";
 import { requestedChartTypes } from "@/lib/charts";
 import { prepareHorizontalBars, rateHighlights } from "@/lib/visualization-data";
 import { contextualizeClarification, shouldUseClarificationContext } from "@/lib/clarification-context";
+import type { RelationshipIntent } from "@/lib/relationship-analysis";
 import { formatDisplayValue } from "@/lib/format-values";
 import type { ChartSpec } from "@/lib/charts";
 import {
@@ -42,6 +43,7 @@ type Answer = { data: DataResult; report: Report; sql: string; panels?: ChartPan
 type Message = {
   id: number; role: "user" | "assistant"; text: string;
   options?: string[]; optionQueries?: string[]; original?: string; example?: string;
+  optionIntents?: RelationshipIntent[]; contextIntent?: RelationshipIntent;
 };
 type AskReply =
   | { type: "stage"; stage: ProgressStage; detail: string; sql?: string }
@@ -50,7 +52,9 @@ type AskReply =
   | { type: "error"; error: string };
 type ProgressStage = "schema" | "checking" | "planning" | "validated" | "executing" | "report";
 type Progress = { stage: ProgressStage; detail: string; sql?: string };
-type Clarification = { question: string; options: string[]; optionQueries?: string[]; originalQuestion: string; example?: string };
+type Clarification = { question: string; options: string[]; optionQueries?: string[];
+  optionIntents?: RelationshipIntent[]; contextIntent?: RelationshipIntent;
+  originalQuestion: string; example?: string };
 const STAGES: { stage: ProgressStage; label: string; description: string }[] = [
   { stage: "schema", label: "Inspect database", description: "Discovering available tables" },
   { stage: "checking", label: "Validate request", description: "Checking actual dataset values" },
@@ -637,12 +641,14 @@ export default function Home() {
       notify("Database disconnected.");
     } catch { notify("Could not disconnect. Please retry.", true); }
   }
-  async function askQuestion(text: string, displayText?: string) {
+  async function askQuestion(text: string, displayText?: string, selectedIntent?: RelationshipIntent) {
     const prompt = text.trim();
     if (!prompt || asking || !session?.connected) return;
-    const effective = activeClarification && shouldUseClarificationContext(prompt) &&
-      !prompt.startsWith("CUSTOM CLARIFICATION:") ?
+    const useContext = activeClarification && shouldUseClarificationContext(prompt) &&
+      !prompt.startsWith("CUSTOM CLARIFICATION:");
+    const effective = useContext ?
       contextualizeClarification(prompt, activeClarification.originalQuestion) : prompt;
+    const intent = selectedIntent || (useContext ? activeClarification?.contextIntent : undefined);
     const requestId = ++requestIdRef.current;
     requestAbortRef.current?.abort();
     const controller = new AbortController();
@@ -662,7 +668,7 @@ export default function Home() {
         method: "POST", headers: { "Content-Type": "application/json" },
         signal: controller.signal,
         cache: "no-store",
-        body: JSON.stringify({ question: effective, tableScope }),
+        body: JSON.stringify({ question: effective, tableScope, relationshipIntent: intent }),
       });
       if (!isLatest()) return;
       if (!response.ok) {
@@ -684,7 +690,8 @@ export default function Home() {
           setActiveClarification(item);
           setMessages((old) => [...old, {
             id: nextMessage(), role: "assistant", text: item.question,
-            options: item.options, optionQueries: item.optionQueries, original: item.originalQuestion, example: item.example,
+            options: item.options, optionQueries: item.optionQueries, original: item.originalQuestion,
+            optionIntents:item.optionIntents, contextIntent:item.contextIntent, example: item.example,
           }]);
         } else if (item.type === "result") {
           finished = true;
@@ -726,11 +733,11 @@ export default function Home() {
       }
     }
   }
-  function selectClarification(option: string, query: string) {
-    void askQuestion(query, option);
+  function selectClarification(option: string, query: string, intent?: RelationshipIntent) {
+    void askQuestion(query, option, intent);
   }
-  function submitCustomOption(custom: string, original: string) {
-    void askQuestion(contextualizeClarification(custom, original), custom);
+  function submitCustomOption(custom: string, original: string, intent?: RelationshipIntent) {
+    void askQuestion(contextualizeClarification(custom, original), custom, intent);
   }
 
   return (
@@ -905,12 +912,13 @@ export default function Home() {
                       <div className="clarification-canvas-options">
                         {activeClarification.options.map((option, index) => (
                           <button key={option} type="button" disabled={asking} onClick={() => selectClarification(
-                            option, activeClarification.optionQueries?.[index] || activeClarification.originalQuestion + ". Clarification: " + option
+                            option, activeClarification.optionQueries?.[index] || activeClarification.originalQuestion + ". Clarification: " + option,
+                            activeClarification.optionIntents?.[index]
                           )}>{option}<ArrowRight size={15}/></button>
                         ))}
                       </div>
                       <ClarificationCustomInput disabled={asking} example={activeClarification.example || visibleStarters[0]}
-                        onSubmit={text => submitCustomOption(text, activeClarification.originalQuestion)}/>
+                        onSubmit={text => submitCustomOption(text, activeClarification.originalQuestion, activeClarification.contextIntent)}/>
                     </div>
                   </div>
                 ) : analysisError ? (
@@ -955,12 +963,13 @@ export default function Home() {
                     {message.options && (
                       <>
                         <div className="clarification-options">{message.options.map((option) =>
-                          <button key={option} disabled={asking} onClick={() => selectClarification(option, message.optionQueries?.[message.options?.indexOf(option) ?? -1] || message.original + ". Clarification: " + option)}>
+                          <button key={option} disabled={asking} onClick={() => selectClarification(option, message.optionQueries?.[message.options?.indexOf(option) ?? -1] || message.original + ". Clarification: " + option,
+                            message.optionIntents?.[message.options?.indexOf(option) ?? -1])}>
                             {option}<ArrowRight size={14}/>
                           </button>
                         )}</div>
                         <ClarificationCustomInput disabled={asking} example={message.example || visibleStarters[0]}
-                          onSubmit={text => submitCustomOption(text, message.original || "")}/>
+                          onSubmit={text => submitCustomOption(text, message.original || "", message.contextIntent)}/>
                       </>
                     )}
                   </div>

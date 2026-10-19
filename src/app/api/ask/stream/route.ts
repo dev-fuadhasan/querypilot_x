@@ -13,13 +13,16 @@ import { SqlValidationError } from "@/lib/sql-guard";
 import { resolveTableScope, simpleRequest, identifyQuestionTable } from "@/lib/table-routing";
 import { planVerifiedBinaryRate } from "@/lib/rate-analysis";
 import { relationshipAnalysis } from "@/lib/relationship-analysis";
+import type { RelationshipIntent } from "@/lib/relationship-analysis";
 import { recognizeEntityTrend, recognizeTopRanking, temporalTrendQuery, pivotTemporalTrend, missingTrendChoices, topRankingSql } from "@/lib/trend";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 type StreamEvent =
   | { type: "stage"; stage: "schema" | "checking" | "planning" | "validated" | "executing" | "report"; detail: string; sql?: string }
-  | { type: "clarification"; question: string; options: string[]; optionQueries?: string[]; originalQuestion: string; example?: string }
+  | { type: "clarification"; question: string; options: string[]; optionQueries?: string[];
+      optionIntents?: RelationshipIntent[]; contextIntent?: RelationshipIntent;
+      originalQuestion: string; example?: string }
   | { type: "result"; data: Awaited<ReturnType<typeof executeQuery>>; report: Awaited<ReturnType<typeof explainResult>>; sql: string;
       panels?: { kind: ChartKind; title: string; data: Awaited<ReturnType<typeof executeQuery>>; sql: string; xKey: string; yKeys: string[] }[];
       unavailable?: string[] }
@@ -42,10 +45,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Connect a Supabase database first." }, { status: 401 });
   let question = "";
   let tableScope: unknown = "all";
+  let relationshipIntent: unknown = null;
   try {
     const body: unknown = await request.json();
     question = typeof (body as { question?: unknown })?.question === "string" ? String((body as { question: string }).question).trim() : "";
     tableScope = (body as { tableScope?: unknown })?.tableScope ?? "all";
+    relationshipIntent = (body as { relationshipIntent?: unknown })?.relationshipIntent ?? null;
   } catch { return NextResponse.json({ error: "Invalid request." }, { status: 400 }); }
   if (!question || question.length > 900) return NextResponse.json({ error: "Ask a question in 900 characters or less." }, { status: 400 });
   let active = session;
@@ -75,8 +80,18 @@ export async function POST(request: NextRequest) {
         const scopedTables = resolveTableScope(tableScope, discovered);
         // Explicit table scope is authoritative. A fuzzy language router must not
         // override a user-selected table or instruct them to switch to All tables.
-        const relevant = tableScope === "all" ? identifyQuestionTable(question, scopedTables) : [];
-        const approvedTables = relevant.length === 1 ? relevant : scopedTables;
+        const requestedTable = relationshipIntent && typeof relationshipIntent === "object"
+          ? (relationshipIntent as Record<string,unknown>).table : null;
+        // Structured follow-ups lock the approved scope to the previously selected
+        // table, after validating it against the current project's permissions.
+        if (requestedTable !== null && (typeof requestedTable !== "string" ||
+            !scopedTables.some(t=>t.name===requestedTable)))
+          throw new Error("The selected analysis table is unavailable in the current scope. Choose another table.");
+        const relevant = requestedTable === null && tableScope === "all"
+          ? identifyQuestionTable(question, scopedTables) : [];
+        const approvedTables = typeof requestedTable === "string"
+          ? scopedTables.filter(t=>t.name===requestedTable)
+          : relevant.length === 1 ? relevant : scopedTables;
         send({ type: "stage", stage: "schema", detail: "Using " + approvedTables.length + " selected/readable table(s) from " + discovered.length + " in this project" });
         const schema = await enrichSchemaWithExamples(approvedTables, async (sql) => {
           if (active.mode === "oauth") return managementReadOnly(active, sql);
@@ -90,10 +105,15 @@ export async function POST(request: NextRequest) {
           return active.mode === "oauth"
             ? managementReadOnly(active, approved)
             : (await executeQuery(active.dbUrl || "", approved)).rows;
-        });
+        }, relationshipIntent);
+        if (relationship?.action === "issue") {
+          send({type:"error",error:relationship.message});
+          return;
+        }
         if (relationship?.action === "clarify") {
           send({ type:"clarification", question:relationship.question, options:relationship.options,
-            optionQueries:relationship.optionQueries, example:relationship.example,
+            optionQueries:relationship.optionQueries, optionIntents:relationship.optionIntents,
+            contextIntent:relationship.contextIntent, example:relationship.example,
             originalQuestion:question });
           return;
         }
