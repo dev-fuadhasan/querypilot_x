@@ -89,7 +89,15 @@ export function resultToData(rows:Record<string,unknown>[]):DataResult {
    const v=rows.find(r=>r[name]!==null&&r[name]!==undefined)?.[name];
    const type:"number"|"date"|"text"= typeof v==="number" ||(typeof v==="string"&&/^-?\d+(\.\d+)?$/.test(v))
      ? "number":typeof v==="string"&&/^\d{4}-\d{2}-\d{2}/.test(v)?"date":"text";
-   return {name,type};
+   // Management API results do not expose PostgreSQL field OIDs; infer decimal
+   // precision from the returned measurements, not hard-coded table names.
+   const numericKind: "integer" | "decimal" | undefined = type !== "number" ? undefined
+     : rows.some(row => {
+         const sample = row[name];
+         return typeof sample === "number" ? !Number.isInteger(sample)
+           : typeof sample === "string" && /[.eE]/.test(sample) && /^-?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?$/.test(sample);
+       }) ? "decimal" : "integer";
+   return {name,type,numericKind};
  }):[];
  return {columns,rows,truncated:false};
 }
