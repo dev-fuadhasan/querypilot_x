@@ -420,3 +420,10 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
  .insight-bar-axis-ticks{font-size:7px}
 }
 @media(prefers-reduced-motion:reduce){.insight-bar-fill{transition:none}}
+
+/* Charts are self-describing: labels remain readable on smaller screens. */
+.chart-context{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 18px;padding:12px 20px 0;color:#617083;font-size:11px;line-height:1.5}
+.chart-context strong{font-weight:700;color:#354255}
+.chart-explanation{font-size:10px;line-height:1.6;color:#7b8594;margin:2px 20px 15px}
+.charts-grid .chart-box{min-height:320px;padding:18px 18px 30px 18px}
+@media(max-width:720px){.chart-context{padding:10px 14px 0;font-size:10px}.charts-grid .chart-box{min-height:280px;height:280px;padding:12px 10px 30px}}
