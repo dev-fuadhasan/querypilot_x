@@ -66,12 +66,16 @@ function metricMatches(question: string, candidates: {name: string; type: string
 }
 function matchingEntity(question: string, columns: {name: string;type: string}[]): string | null {
   const subjects = subjectWords(question);
-  const candidates = columns.filter(c => /(^name$|(?:_name|_id)$|^(?:city|country|region|category|department|brand|sku)$)/i.test(c.name));
+  const candidates = columns.filter(c => {
+    const parts = tokens(c.name);
+    const last = parts[parts.length-1];
+    return ["name","id","code"].includes(last) || ["city","country","region","category","department","brand","sku"].includes(parts.join(""));
+  });
   const scored = candidates.map(c => {
     const parts = tokens(c.name);
     const prefix = parts.filter(p=>!["name","id","code"].includes(p));
     const match = prefix.some(p => subjects.includes(p)) ? 12 : 0;
-    const isName = /(?:^name$|_name$)/i.test(c.name);
+    const isName = tokens(c.name).at(-1) === "name";
     return { column: c.name, score: match + (isName ? 2 : 0), matched: match > 0 };
   }).sort((a,b)=>b.score-a.score);
   const matched = scored.filter(x=>x.matched);
@@ -80,12 +84,12 @@ function matchingEntity(question: string, columns: {name: string;type: string}[]
   return candidates.length===1 ? candidates[0].name : null;
 }
 export function recognizeEntityTrend(question: string, schema: TableInfo[], requireHistory = true): TrendRequest | null {
-  if ((requireHistory && !historyTerm.test(question)) || !metricTerm.test(question)) return null;
+  if (requireHistory && !historyTerm.test(question)) return null;
   const top = requestedTopCount(question);
   if (!top) return null;
   const matches = schema.flatMap(table => {
     const eligibleMetrics = table.columns.filter(c => isNumericType(c.type) &&
-      /\b(rating|score|price|revenue|sales|value|temperature|quantity|profit|amount|fare|discount|cost|count)\b/i.test(c.name.replace(/_/g," ")));
+      !/(^id$|_id$|postal|zip|phone|date|timestamp|created_at|updated_at)$/i.test(c.name));
     const metric = metricMatches(question, eligibleMetrics);
     const entity = matchingEntity(question, table.columns);
     if (!metric || !entity) return [];
