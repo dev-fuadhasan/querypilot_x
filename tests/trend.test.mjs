@@ -4,7 +4,7 @@ import { parse } from "pgsql-ast-parser";
 import { recognizeEntityTrend, recognizeTopRanking, temporalTrendQuery, topRankingSql, pivotTemporalTrend, missingTrendChoices } from "../src/lib/trend.ts";
 const snapshot=[{name:"sales_data",columns:[
  {name:"product_id",type:"text"},{name:"product_name",type:"text"},
- {name:"discounted_price",type:"text"},{name:"rating",type:"text"},
+ {name:"discounted_price",type:"text"},{name:"actual_price",type:"text"},{name:"rating",type:"text"},
  {name:"rating_count",type:"text"},{name:"category",type:"text"}
 ]}];
 const historical=[{...snapshot[0],columns:[...snapshot[0].columns,{name:"reviewed_at",type:"timestamp without time zone"}]}];
@@ -32,7 +32,7 @@ test("historical ratings pivot into five real line series",()=>{
  const req=recognizeEntityTrend("top five product rating trends over time",historical);
  assert.ok(req);assert.equal(req.date,"reviewed_at");
  const sql=temporalTrendQuery(req,historical);
- assert.ok(sql);assert.equal(parse(sql)[0].type,"select");
+ assert.ok(sql);assert.equal(parse(sql)[0].type,"with");
  const data={columns:[{name:"period",type:"text"},{name:"entity",type:"text"},{name:"measurement",type:"number"}],
   truncated:false,rows:[
     ...["A","B","C","D","E"].map((entity,i)=>({entity,period:"2026-01-01",measurement:3.3+i/10})),

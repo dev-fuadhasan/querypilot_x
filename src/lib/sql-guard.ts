@@ -64,6 +64,9 @@ export function normalizeAndGuardSql(raw: string): string {
   let parsed: ReturnType<typeof parse>;
   try { parsed = parse(output); }
   catch { throw new SqlValidationError("SQL syntax could not be validated. QueryPilot will try to repair the SQL."); }
-  if (parsed.length !== 1 || parsed[0]?.type !== "select") throw new SqlValidationError("Only a single read-only SELECT is supported.");
+  // pgsql-ast-parser represents a SELECT using WITH CTEs as type "with".
+  // All write statements, extra statements and unsafe schemas were rejected above.
+  if (parsed.length !== 1 || !["select", "with"].includes(parsed[0]?.type))
+    throw new SqlValidationError("Only a single read-only SELECT is supported.");
   return output;
 }

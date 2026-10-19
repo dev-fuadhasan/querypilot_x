@@ -36,7 +36,10 @@ export function recognizeEntityTrend(question: string, schema: TableInfo[], requ
     // Never silently choose between actual_price and discounted_price, for example.
     const metric = exactMatches.length === 1 ? exactMatches[0] :
       exactMatches.length > 1 ? null : partialMatches.length === 1 ? partialMatches[0] : null;
-    const entity = table.columns.find(c => /(^|_)(product|item|service|customer|company|station|city|patient|student|device)_(name|id)$|^name$/i.test(c.name)) || null;
+    // A readable name is preferred to a project-local opaque ID when both exist.
+    const candidates = table.columns.filter(c => /(^|_)(product|item|service|customer|company|station|city|patient|student|device)_(name|id)$|^name$/i.test(c.name));
+    const entity = candidates.find(c => c.name.toLowerCase().endsWith("_name") || c.name.toLowerCase() === "name") ||
+      candidates.find(c => c.name.toLowerCase().endsWith("_id")) || null;
     if (!metric || !entity) return [];
     const root = table.name.replace(/(?:_data|_history|_records|_reviews|_table)$/i,"").toLowerCase();
     const matchName = root && question.toLowerCase().includes(root) ? 3 : 0;
