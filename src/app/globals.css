@@ -190,3 +190,42 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 @keyframes progress-enter{from{opacity:0;transform:translateY(9px)}to{opacity:1;transform:translateY(0)}}
 @media(max-width:720px){.query-progress{padding:18px 14px;align-items:flex-start}.progress-icon{display:none}.progress-kicker{justify-content:flex-start}.progress-shell h2,.progress-subtitle{text-align:left}.progress-subtitle{margin-bottom:12px}.progress-steps{padding:1px 12px}.progress-step{min-height:43px;padding:7px 0;gap:10px}.progress-step small{display:none}.progress-live{display:none}.query-code pre{max-height:70px}.query-code-top{padding:9px 12px}}
 @media(prefers-reduced-motion:reduce){.progress-orbit,.pulse-dot,.progress-shell,.query-code{animation:none!important}}
+
+
+/* Explicit project selection and always-visible dashboard project switcher. */
+.workspace-header{position:relative;z-index:10}
+.header-right{position:relative}
+.project-list-label{font-size:10px;font-weight:750;letter-spacing:1.45px;color:#8a9099;display:flex;align-items:center;justify-content:space-between}
+.project-list-label span{border-radius:30px;padding:3px 8px;color:#686d75;background:#f3f4f6;font-size:10px}
+.project-choice-list{display:flex;flex-direction:column;gap:9px;max-height:220px;overflow-y:auto}
+.project-choice{width:100%;background:#fff;border:1px solid #e8eaed;border-radius:11px;display:flex;align-items:center;gap:13px;text-align:left;padding:13px;transition:background .15s,border-color .15s}
+.project-choice:hover:not(:disabled){background:#fbfbfb;border-color:#bebfc4}
+.project-choice.selected{background:#fbfbfc;border-color:#1b1c20}
+.project-choice-icon{width:39px;height:39px;display:grid;place-items:center;border-radius:10px;background:#f6f7f8;flex-shrink:0;color:#5c626c}
+.project-choice.selected .project-choice-icon{background:#202125;color:#fff}
+.project-choice-details{display:flex;flex-direction:column;gap:4px;flex:1;min-width:0}
+.project-choice-details strong{font-size:12px;font-weight:680;overflow:hidden;text-overflow:ellipsis}
+.project-choice-details small{font-size:10px;color:#9ba0a8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.project-choice-indicator{width:21px;height:21px;border:1px solid #dfe2e5;border-radius:50%;display:grid;place-items:center;color:#fff;flex-shrink:0}
+.project-choice.selected .project-choice-indicator{background:#202125;border-color:#202125}
+.project-switch-anchor{position:relative}
+.project-pill{appearance:none;cursor:pointer;min-width:0;gap:9px}
+.project-pill:hover:not(:disabled),.project-pill.open{background:#f5f6f7;border-color:#d8dade}
+.project-pill .rotate{transform:rotate(180deg)}
+.project-switch-backdrop{position:fixed;inset:0;border:0;background:transparent;z-index:20;cursor:default}
+.project-switch-menu{position:absolute;right:0;top:calc(100% + 12px);z-index:21;width:min(315px,calc(100vw - 28px));border:1px solid #e5e7eb;border-radius:13px;background:#fff;box-shadow:0 16px 48px rgba(0,0,0,.13);overflow:hidden}
+.project-switch-title{padding:17px 16px 14px;display:flex;justify-content:space-between;gap:8px;align-items:center;color:#343840;font-size:10px;letter-spacing:1.25px;font-weight:780;border-bottom:1px solid #f0f0f1}
+.project-switch-title span{letter-spacing:.5px;color:#aaaeb6;font-size:9px;font-weight:650}
+.project-switch-list{padding:7px;max-height:min(380px,50dvh);overflow-y:auto}
+.switch-project-option{width:100%;border:0;background:#fff;border-radius:9px;display:flex;align-items:center;gap:10px;text-align:left;padding:12px 10px;color:#767d86}
+.switch-project-option:hover:not(:disabled){background:#f6f7f8}
+.switch-project-option.active{background:#f5f6f7;color:#202226}
+.switch-option-icon{width:31px;height:31px;border-radius:8px;background:#f0f1f3;color:#626873;display:grid;place-items:center;flex-shrink:0}
+.switch-project-option.active .switch-option-icon{background:#202226;color:#fff}
+.switch-option-text{min-width:0;flex:1;display:flex;flex-direction:column;gap:4px}
+.switch-option-text strong{font-size:11px;color:#282b30;font-weight:690;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.switch-option-text small{font-size:10px;color:#9a9ea7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.switch-menu-foot{padding:13px 15px;border-top:1px solid #f0f0f2;color:#9398a0;font-size:10px;display:flex;align-items:center;gap:7px}
+@media(max-width:720px){.project-switch-menu{right:-37px;top:calc(100% + 11px)}.project-choice-list{max-height:160px}.connected-pill .connected-name{max-width:110px}}
+
+.session-loading{height:100%;width:100%;display:flex;align-items:center;justify-content:center;background:#fff}

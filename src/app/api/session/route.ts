@@ -8,6 +8,7 @@ export async function GET() {
   return NextResponse.json({
     connected: Boolean(session?.dbUrl || (session?.mode === "oauth" && session?.projectRef && session?.accessToken)),
     projectName: session?.projectName || "",
+    projectRef: session?.projectRef || "",
     projects: session?.mode === "oauth" ? (session.projects || []) : [],
     mode: session?.mode || null,
     oauthEnabled: oauthConfigured(),

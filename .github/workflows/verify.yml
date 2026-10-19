@@ -18,6 +18,8 @@ jobs:
         run: npm install --no-audit --no-fund
       - name: Numeric text SQL smoke test
         run: node tests/sql-smoke.cjs
+      - name: Project session and switch regression tests
+        run: node --experimental-strip-types --test tests/project-flow.test.mjs
       - name: Type-check
         run: npm run typecheck
       - name: Production build

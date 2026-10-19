@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { initialProjectRef, resolveStartupPhase } from "@/lib/connection-flow";
 import {
   ArrowRight, ArrowUpRight, BarChart3, Check, CheckCircle2, ChevronDown,
   CircleHelp, Database, Eye, EyeOff, FileText, Layers3, LoaderCircle,
@@ -15,6 +16,7 @@ type SessionStatus = {
   connected: boolean;
   projectName: string;
   projects: { id: string; name: string }[];
+  projectRef?: string;
   oauthEnabled: boolean;
   configured: boolean;
   aiConfigured: boolean;
@@ -257,6 +259,7 @@ export default function Home() {
   const [showUri, setShowUri] = useState(false);
   const [manualMode, setManualMode] = useState(false);
   const [projectRef, setProjectRef] = useState("");
+  const [switchOpen, setSwitchOpen] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [question, setQuestion] = useState("");
@@ -281,14 +284,14 @@ export default function Home() {
       if (!active) return;
       setSession(data);
       const params = new URLSearchParams(window.location.search);
-      if (data.connected) setPhase("workspace");
+      const nextPhase = resolveStartupPhase(data);
+      setPhase(params.has("setup") && nextPhase === "landing" ? "setup" : nextPhase);
+      setProjectRef(initialProjectRef(data));
+      setManualMode(!data.oauthEnabled || (data.projects.length === 0 && params.get("setup") === "manual"));
       if (params.has("connected") && data.connected) notify("Your Supabase database is connected.");
-      else if (params.has("setup") || data.projects.length) setPhase("setup");
-      if (data.projects.length) setProjectRef(data.projects[0].id);
       const err = params.get("error");
       if (err) notify(err, true);
       if (params.has("setup") || params.has("connected") || err) window.history.replaceState({}, "", "/");
-      if (!data.oauthEnabled) setManualMode(true);
     }).catch((err) => { if (active) notify(err instanceof Error ? err.message : "Could not start the application.", true); });
     return () => { active = false; };
   }, []);
@@ -299,23 +302,34 @@ export default function Home() {
 
   function beginConnect() {
     if (!session?.configured) return notify("Set SESSION_SECRET on Vercel before connecting.", true);
-    if (session.oauthEnabled) window.location.assign("/api/auth/start");
+    if (session.mode === "oauth" && session.projects.length > 0) {
+      setManualMode(false);
+      setProjectRef(initialProjectRef(session));
+      setPhase("setup");
+    } else if (session.oauthEnabled) window.location.assign("/api/auth/start");
     else { setManualMode(true); setPhase("setup"); }
   }
-  async function connectAuthorizedProject() {
-    if (!projectRef || connecting) return;
+  async function connectAuthorizedProject(targetRef: string = projectRef) {
+    if (!targetRef || connecting || asking) return;
+    if (session?.connected && targetRef === session.projectRef) {
+      setSwitchOpen(false);
+      setPhase("workspace");
+      return;
+    }
     setConnecting(true);
     try {
       const res = await fetch("/api/projects/select", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectRef }),
+        body: JSON.stringify({ projectRef: targetRef }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Could not connect this project.");
-      setSession((old) => old ? { ...old, connected: true, mode: "oauth", projectName: data.projectName } : old);
-      setAnswer(null); setMessages([]); setProgress(null);
+      setProjectRef(targetRef);
+      setSession((old) => old ? { ...old, connected: true, mode: "oauth", projectRef: targetRef, projectName: data.projectName } : old);
+      setAnswer(null); setMessages([]); setProgress(null); setCurrentQuestion(""); setQuestion("");
+      setSwitchOpen(false);
       setPhase("workspace");
-      notify("Your Supabase database is connected.");
+      notify("Connected to " + data.projectName + ".");
     } catch (error) { notify(error instanceof Error ? error.message : "Could not connect this project.", true); }
     finally { setConnecting(false); }
   }
@@ -345,7 +359,9 @@ export default function Home() {
       setAnswer(null);
       setMessages([]);
       setProgress(null);
-      setSession((old) => old ? { ...old, connected: false, mode: null, projects: [], projectName: "" } : old);
+      setProjectRef("");
+      setSwitchOpen(false);
+      setSession((old) => old ? { ...old, connected: false, mode: null, projectRef: undefined, projects: [], projectName: "" } : old);
       setPhase("landing");
       notify("Database disconnected.");
     } catch { notify("Could not disconnect. Please retry.", true); }
@@ -418,7 +434,11 @@ export default function Home() {
 
   return (
     <div className="app-root">
-      {phase === "landing" || !session ? (
+      {!session ? (
+        <div className="session-loading" role="status" aria-label="Restoring your workspace">
+          <Brand/>
+        </div>
+      ) : phase === "landing" ? (
         <div className="onboarding">
           <div className="onboard-brand"><Brand/></div>
           <main className="welcome">
@@ -439,21 +459,29 @@ export default function Home() {
           <main className="setup-shell">
             <button className="back-link" onClick={() => setPhase(session.connected ? "workspace" : "landing")}><ArrowRight size={16}/> Back</button>
             <div className="setup-icon"><SupabaseMark size={31}/></div>
-            <h1>Connect your database</h1>
-            <p>{session.projects.length && !manualMode ? "Select your authorized Supabase project. No database password is needed for OAuth read-only access." :
+            <h1>{session.projects.length > 0 && !manualMode ? "Choose your project" : "Connect your database"}</h1>
+            <p>{session.projects.length && !manualMode ? "Supabase is authorized. Choose the project you want QueryPilot X to analyze." :
               "Connect any Supabase PostgreSQL project using its read-only connection string."}</p>
             {session.projects.length > 0 && !manualMode && (
               <div className="oauth-selector">
-                <label className="form-group"><span>Your Supabase projects</span>
-                  <select value={projectRef} onChange={(event) => setProjectRef(event.target.value)}>
-                    {session.projects.map((project) => <option value={project.id} key={project.id}>{project.name}</option>)}
-                  </select>
-                </label>
-                <button className="black-button full" onClick={connectAuthorizedProject} disabled={connecting || !projectRef}>
+                <div className="project-list-label">YOUR AUTHORIZED PROJECTS <span>{session.projects.length}</span></div>
+                <div className="project-choice-list" role="group" aria-label="Supabase projects">
+                  {session.projects.map((project) => (
+                    <button key={project.id} type="button"
+                      className={"project-choice " + (projectRef === project.id ? "selected" : "")}
+                      onClick={() => setProjectRef(project.id)}
+                      disabled={connecting}>
+                      <span className="project-choice-icon"><Database size={19}/></span>
+                      <span className="project-choice-details"><strong>{project.name}</strong><small>Supabase · {project.id}</small></span>
+                      <span className="project-choice-indicator">{projectRef === project.id ? <Check size={14}/> : null}</span>
+                    </button>
+                  ))}
+                </div>
+                <button className="black-button full" onClick={() => connectAuthorizedProject()} disabled={connecting || !projectRef}>
                   {connecting ? <LoaderCircle size={18} className="spin"/> : <SupabaseMark size={20}/>}
-                  {connecting ? "Connecting read-only…" : "Connect selected project"}<ArrowRight size={17}/>
+                  {connecting ? "Verifying selected project…" : "Continue to dashboard"}<ArrowRight size={17}/>
                 </button>
-                <div className="auto-connect-hint"><ShieldCheck size={16}/> Read-only OAuth authorization. No PostgreSQL password required.</div>
+                <div className="auto-connect-hint"><ShieldCheck size={16}/> Read-only access · Project selection is saved for your next visit.</div>
               </div>
             )}
             {(manualMode || !session.projects.length) && <form className="connect-form" onSubmit={connectDatabase}>
@@ -503,12 +531,45 @@ export default function Home() {
             <header className="workspace-header">
               <Brand small/>
               <div className="header-right">
-                <div className="connected-pill"><span className="online-indicator"/><SupabaseMark size={16}/><span className="connected-name">{session.projectName}</span><Check size={14}/></div>
-                <button className="icon-button" title="Switch Supabase project" aria-label="Switch project" onClick={() => {
-                  setManualMode(session.mode !== "oauth");
-                  setProjectRef(session.projects[0]?.id || "");
-                  setPhase("setup");
-                }}><Database size={17}/></button>
+                {session.mode === "oauth" && session.projects.length > 0 ? (
+                  <div className="project-switch-anchor">
+                    <button className={"connected-pill project-pill " + (switchOpen ? "open" : "")}
+                      type="button" aria-haspopup="dialog" aria-expanded={switchOpen}
+                      aria-label={"Current project: " + session.projectName + ". Switch Supabase project"}
+                      onClick={() => setSwitchOpen(value => !value)} disabled={connecting || asking}>
+                      <span className="online-indicator"/><SupabaseMark size={16}/>
+                      <span className="connected-name">{session.projectName}</span>
+                      <ChevronDown size={14} className={switchOpen ? "rotate" : ""}/>
+                    </button>
+                    {switchOpen && (
+                      <>
+                        <button type="button" className="project-switch-backdrop" aria-label="Close project switcher" onClick={() => setSwitchOpen(false)}/>
+                        <div className="project-switch-menu" role="dialog" aria-label="Switch Supabase project">
+                          <div className="project-switch-title">SWITCH PROJECT <span>{session.projects.length} AVAILABLE</span></div>
+                          <div className="project-switch-list">
+                            {session.projects.map(project => (
+                              <button type="button" className={"switch-project-option " + (project.id === session.projectRef ? "active" : "")}
+                                key={project.id} disabled={connecting || asking}
+                                onClick={() => { setProjectRef(project.id); void connectAuthorizedProject(project.id); }}>
+                                <span className="switch-option-icon"><Database size={16}/></span>
+                                <span className="switch-option-text"><strong>{project.name}</strong><small>{project.id === session.projectRef ? "Current project" : project.id}</small></span>
+                                {connecting && project.id === projectRef ? <LoaderCircle size={15} className="spin"/> : project.id === session.projectRef ? <Check size={15}/> : <ArrowRight size={14}/>}
+                              </button>
+                            ))}
+                          </div>
+                          <div className="switch-menu-foot"><ShieldCheck size={13}/> Your authorized Supabase projects</div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    <div className="connected-pill"><span className="online-indicator"/><SupabaseMark size={16}/><span className="connected-name">{session.projectName}</span><Check size={14}/></div>
+                    <button className="icon-button" title="Connect a different project" aria-label="Connect a different project"
+                      disabled={asking || connecting}
+                      onClick={() => { setManualMode(true); setPhase("setup"); }}><Database size={17}/></button>
+                  </>
+                )}
                 <button className="icon-button" title="Disconnect database" aria-label="Disconnect database" onClick={disconnect}><LogOut size={17}/></button>
               </div>
             </header>

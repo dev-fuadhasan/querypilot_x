@@ -43,7 +43,7 @@ Supabase supports an OAuth integration and a **read-only Management API database
 3. Configure its exact redirect URL: `https://YOUR-DOMAIN/api/auth/callback`.
 4. Add `APP_URL`, `SUPABASE_OAUTH_CLIENT_ID`, and `SUPABASE_OAUTH_CLIENT_SECRET` in Vercel.
 5. Visit QueryPilot X → **Connect your database** → sign in/authorize on Supabase.
-6. When the user has a single readable project, QueryPilot verifies it and opens the workspace automatically. With more than one project, the user selects a project, and QueryPilot verifies it.
+6. After authorization, the user selects a project, even when there is only one available. QueryPilot verifies read-only database access before opening the dashboard.
 7. The app runs the Supabase Management API endpoint `POST /v1/projects/{ref}/database/query/read-only` under that user's OAuth authorization. The selected project is scoped to the signed-in visitor's encrypted session.
 
 **Important:** This read-only SQL endpoint is **beta/experimental**, and some accounts/projects may not support it. Queries have to use fully schema-qualified table names (e.g., `public.orders`). Some Supabase database configurations may hide tables from the read-only user. If you encounter unsupported endpoint / authorization / missing accessible tables, use the manual read-only fallback below.
@@ -122,3 +122,14 @@ LIMIT 5;
 ~~~
 
 This is a demonstration query for that dataset; QueryPilot does not hardcode the sales_data table. Schema discovery and SQL planning remain dynamic for other users' Supabase projects. The app never modifies database column types or writes to repair price formatting.
+
+
+## Project selection and dashboard switching
+
+OAuth authorization grants QueryPilot X access to the set of Supabase projects allowed by the consenting user. **It does not automatically activate any specific database.** After returning from Supabase, the first screen lists the user's authorized projects. The user selects one and clicks **Continue to dashboard**.
+
+On later page reloads, QueryPilot restores the selected project from the encrypted session (until the session expires, is revoked or the user disconnects). Merely having an authorized project list does not force another selection screen.
+
+Inside the dashboard, click the **current project name with its dropdown arrow** to show your other authorized projects. Select a project to verify its read-only database access. Only after successful verification does the active session change; the prior project's chat, SQL output and visualizations are cleared. If verification fails, the previous active project stays selected and no data is mixed. New project selection does **not** require repeating Supabase consent while the OAuth authorization remains valid.
+
+Manual connection remains an advanced fallback for accounts where the Supabase read-only Management API is unavailable.

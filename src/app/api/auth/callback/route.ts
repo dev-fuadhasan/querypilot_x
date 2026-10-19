@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { clearOAuthState, readOAuthState, saveSession } from "@/lib/session";
-import { exchangeOAuth, getOAuthSchema, listProjects } from "@/lib/management";
+import { exchangeOAuth, listProjects } from "@/lib/management";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -20,19 +20,10 @@ export async function GET(req: NextRequest) {
     const tokens = await exchangeOAuth(code, saved.verifier, new URL("/api/auth/callback", base).toString());
     const projects = await listProjects(tokens.accessToken);
     if (projects.length === 0) return fail("No accessible Supabase projects. Check project authorization.");
-    // Automatically connect a single project only after verifying read-only query access.
-    let selected: { projectRef?: string; projectName?: string } = {};
-    if (projects.length === 1) {
-      try {
-        const probe = await getOAuthSchema({ mode: "oauth", ...tokens, projectRef: projects[0].id, issuedAt: Date.now() });
-        if (!probe.length) throw new Error("No accessible public tables.");
-        selected = { projectRef: projects[0].id, projectName: projects[0].name };
-      } catch {
-        // Keep project authorized, show selector and allow manual read-only fallback.
-      }
-    }
-    const response = NextResponse.redirect(new URL(selected.projectRef ? "/?connected=1" : "/?setup=project", base));
-    saveSession(response, { mode: "oauth", ...tokens, projects, ...selected });
+    // Authorization alone must never select a project or open the dashboard.
+    // Even a single-project organization must explicitly select the intended database.
+    const response = NextResponse.redirect(new URL("/?setup=project", base));
+    saveSession(response, { mode: "oauth", ...tokens, projects });
     clearOAuthState(response);
     return response;
   } catch (e) {
