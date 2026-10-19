@@ -181,7 +181,7 @@ export function buildDashboardCharts(question:string,data:ChartData,suggestions:
   // Allow semantic ID categories (e.g. product_id), but not row-level IDs.
   const entityIds=columns.filter(c=>/(?:product|customer|group|item|station|store|region)_id$/i.test(c.name)).map(c=>c.name);
   const xFromSuggest=suggestions.find(s=>columns.some(c=>c.name===s.xKey))?.xKey;
-  const xKey=xFromSuggest||allDates[0]||labelFields[0]||entityIds[0]||"";
+  const xKey=xFromSuggest||allDates[0]||labelFields[0]||entityIds[0]||numericFields.find(k=>timeOrderedNumeric(k,question,data.rows))||"";
   const temporal=Boolean(xKey&&allDates.includes(xKey));
   const ordered=Boolean(xKey&&!temporal&&timeOrderedNumeric(xKey,question,data.rows));
   const metricFields=numericFields.filter(k=>k!==xKey);
