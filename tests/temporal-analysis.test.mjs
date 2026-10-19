@@ -86,3 +86,28 @@ test("mixed date formats do not silently drop unparseable records",async()=>{
  assert.equal(plan?.action,"clarify");
  assert.match(plan.question,/mixed or unsupported/);
 });
+
+test("unseen domain: city population ranking works without a hardcoded metric dictionary",()=>{
+  const geo={name:"geo_statistics",columns:[
+    {name:"city",type:"text"},{name:"population",type:"integer"},{name:"land_area",type:"numeric"}
+  ]};
+  const intent=recognizeTopRanking("top 5 cities by population",[geo]);
+  assert.equal(intent?.entity,"city");
+  assert.equal(intent?.metric,"population");
+  assert.match(topRankingSql(intent,[geo]),/AVG\("population"::numeric\)/);
+});
+test("column names with spaces remain schema-qualified and quoted",async()=>{
+  const t={name:"Retail Reports",columns:[
+    {name:"Product Name",type:"text"},{name:"Order Date",type:"date"},{name:"Sales Amount",type:"numeric"}
+  ]};
+  const i=recognizeTopRanking("top 5 products by Sales Amount",[t]);
+  assert.equal(i?.entity,"Product Name");
+  assert.equal(i?.metric,"Sales Amount");
+  const sql=topRankingSql(i,[t]);
+  assert.match(sql,/"Product Name"/);
+  assert.equal(parse(sql)[0].type,"select");
+  const trend=await planTemporalAnalysis("Monthly Sales Amount trend in Retail Reports",[t],async()=>[]);
+  assert.equal(trend?.action,"query");
+  assert.match(trend.sql,/"Order Date"/);
+  assert.equal(parse(trend.sql)[0].type,"select");
+});
