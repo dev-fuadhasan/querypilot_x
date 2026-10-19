@@ -73,6 +73,10 @@ function isDateColumn(name:string,type:string,rows:Record<string,unknown>[]):boo
     || typeof v==="number"&&Number.isInteger(v)&&v>=1000&&v<=9999);
 }
 function semanticMetric(name:string,question:string):string {
+  if(PERCENT.test(name) || /(?:_pct|_percentage|_percent)$/i.test(name)) {
+    const base = pretty(name.replace(/(?:_pct|_percentage|_percent)$/i, "")).replace(/\s*%$/, "") || "Percentage";
+    return /\bsurviv(?:al|ed|or)\b/i.test(question) && /^(?:rate|percentage)$/i.test(base) ? "Survival Rate" : base;
+  }
   if(!/^(metric_value|measurement|value|records|count|total|metric_\d+)$/i.test(name))return pretty(name);
   if(/^(?:records|count)$/i.test(name))return "Record Count";
   const q=question.toLowerCase();
@@ -99,10 +103,6 @@ function dimensionLabel(name:string,question:string,temporal:boolean):string {
     return /date|time/i.test(name)?"Date":"Period";
   }
   if(!/^(entity|group_name|dimension|category|group|label)$/i.test(name))return pretty(name);
-  const by=/\bby\s+([a-z][\w-]*(?:\s+[a-z][\w-]*)?)/i.exec(question)?.[1]||"";
-  const phrase=by.replace(/\b(?:in|from|as|with|per|the|of|and)\b.*$/i,"").trim();
-  if(phrase&&phrase.length<=28 && !/^(sales|profit|revenue|rating|price|quantity|total|average|count|value)$/i.test(phrase))
-    return pretty(phrase);
   const groups:[RegExp,string][]=[
     [/\bproduct(s)?\b/i,"Product"],[/\bcustomer(s)?\b/i,"Customer"],
     [/\b(region|regions)\b/i,"Region"],[/\b(country|countries)\b/i,"Country"],
@@ -110,7 +110,13 @@ function dimensionLabel(name:string,question:string,temporal:boolean):string {
     [/\bsegment(s)?\b/i,"Segment"],[/\b(class|pclass)\b/i,"Class"],
     [/\b(city|cities)\b/i,"City"],[/\b(category|categories)\b/i,"Category"]
   ];
-  return groups.find(([pattern])=>pattern.test(question))?.[1]||pretty(name);
+  const recognized=groups.find(([pattern])=>pattern.test(question))?.[1];
+  if(recognized)return recognized;
+  const by=/\bby\s+([a-z][\w-]*(?:\s+[a-z][\w-]*)?)/i.exec(question)?.[1]||"";
+  const phrase=by.replace(/\b(?:in|from|as|with|per|the|of|and)\b.*$/i,"").trim();
+  if(phrase&&phrase.length<=28 && !/^(?:sales|profit|revenue|rating|price|quantity|total|average|sum|mean|count|value)(?:\b|$)/i.test(phrase))
+    return pretty(phrase);
+  return pretty(name);
 }
 function isPercent(name:string,question:string,measure:string):boolean {
   if(PERCENT.test(name)||/(?:_pct|percentage|percent)$/i.test(name))return true;
