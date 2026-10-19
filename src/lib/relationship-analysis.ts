@@ -1,6 +1,6 @@
 import type { TableInfo } from "./database";
 import type { ChartKind } from "./charts";
-import { quoteTableId } from "./table-routing";
+import { quoteTableId } from "./table-routing.ts";
 
 type Row = Record<string,unknown>;
 type Reader = (sql: string) => Promise<Row[]>;
