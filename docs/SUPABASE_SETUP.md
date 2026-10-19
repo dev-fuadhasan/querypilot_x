@@ -75,7 +75,7 @@ Use `querypilot_reader.PROJECT_REF` as the pooler username with that role's pass
 - Schema inspection on every new question.
 - Natural-language question to validated PostgreSQL SELECT.
 - Follow-up clarification questions with selectable answers.
-- Responsive left-side results with KPI cards, tables, automatic line/bar/pie charts and an AI analysis report.
+- Responsive left-side results with KPI cards, tables, AI-selected line, bar, pie, area and scatter charts (up to two when useful) and an AI analysis report.
 - Displayable SQL for transparency; rows capped at 200; database read-only transaction and query timeout.
 - Fixed-viewport split-panel application with independently scrollable content areas.
 
