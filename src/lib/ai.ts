@@ -20,7 +20,7 @@ export type Report = {
   summary: string;
   insights: string[];
   caveats: string[];
-  visualization: "bar" | "line" | "pie" | "table" | "kpi";
+  visualization: "bar" | "line" | "pie" | "area" | "scatter" | "table" | "kpi";
   xKey?: string;
   yKeys?: string[];
   suggestedQuestions: string[];
