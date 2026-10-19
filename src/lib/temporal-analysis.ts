@@ -7,7 +7,7 @@ export type TemporalPlan =
 
 const NUMERIC = /integer|bigint|smallint|numeric|decimal|double precision|real|float|money|text|varchar|character/i;
 const DATE_TYPE = /date|timestamp/i;
-const DATE_NAME = /(?:^|_)(date|time|timestamp|day|month|year|created_at|updated_at)(?:_|$)/i;
+const DATE_NAME = /(?:^|[ _-])(date|datetime|timestamp|time|day|month|year|created[ _-]at|updated[ _-]at)(?:[ _-]|$)/i;
 const TIME_REQUEST = /\b(monthly|weekly|daily|yearly|annually|quarterly|month.by.month|per month|per week|per day|per year|over time|time series)\b/i;
 const RATE = /(?:^|_)(rating|score|rate|percent|percentage|ratio|average|mean|price|cost|temperature|age|discount)(?:_|$)/i;
 const QUOTED = (s: string) => '"' + s.replace(/"/g,'""') + '"';
