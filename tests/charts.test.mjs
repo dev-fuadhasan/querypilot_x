@@ -125,3 +125,14 @@ test("two unrelated measures cannot be stacked into an incoherent bar",()=>{
  rows:[{branch:"A",revenue:5000,rate_pct:40},{branch:"B",revenue:2000,rate_pct:20}]};
  assert.deepEqual(buildDashboardCharts("stacked column chart for revenue and conversion rate",data),[]);
 });
+
+test("age-specific outcome rates may use an ordered numeric line axis",()=>{
+ const data={columns:[{name:"age",type:"number"},{name:"survival_rate_pct",type:"number"}],
+ rows:[{age:40,survival_rate_pct:70},{age:20,survival_rate_pct:85},{age:30,survival_rate_pct:80}]};
+ const chart=buildDashboardCharts("Show survival rate trend by age as line graph",data)[0];
+ assert.equal(chart.type,"line");
+ assert.equal(chart.xKey,"age");
+ assert.deepEqual(chart.yKeys,["survival_rate_pct"]);
+ assert.equal(chart.xLabel,"Age");
+ assert.equal(chart.unit,"%");
+});
