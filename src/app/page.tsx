@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { initialProjectRef, resolveStartupPhase } from "@/lib/connection-flow";
 import { requestedChartTypes } from "@/lib/charts";
+import { prepareHorizontalBars, rateHighlights } from "@/lib/visualization-data";
 import type { ChartSpec } from "@/lib/charts";
 import {
   ArrowRight, ArrowUpRight, BarChart3, Check, CheckCircle2, ChevronDown,
@@ -136,12 +137,87 @@ function HeatmapView({ data, view }: { data: DataResult; view: ChartSpec }) {
     </div>
   );
 }
+function InsightHorizontalBarChart({ data, view }: { data: DataResult; view: ChartSpec }) {
+  const display = prepareHorizontalBars(data, view);
+  if (!display) return null;
+  const barColors = ["#5c67dc", "#18a48c", "#a277e1", "#ee9e3a", "#268bc1", "#dd6d8e"];
+  return (
+    <section className="viz-card premium-chart">
+      <div className="viz-heading premium-chart-heading">
+        <span><BarChart3 size={17}/>{view.title}</span>
+        <span className="viz-hint">HORIZONTAL BAR · {display.rows.length} GROUPS</span>
+      </div>
+      <div className="premium-chart-meta">
+        <span>{display.categoryLabel}</span>
+        <span>{display.axisLabel}</span>
+      </div>
+      <div className="insight-bar-content">
+        {display.rows.map((row, index) => (
+          <div className="insight-bar-row" key={row.label + ":" + index}>
+            <div className="insight-bar-label" title={row.label}>{row.label}</div>
+            <div className="insight-bar-track" role="img"
+              aria-label={row.label + ": " + row.formatted}>
+              <div className="insight-bar-grid" aria-hidden="true">
+                {display.ticks.map(tick => <span key={tick.value}/>)}
+              </div>
+              <div className="insight-bar-fill" style={{
+                width: row.percentageOfScale + "%",
+                backgroundColor: barColors[index % barColors.length]
+              }}/>
+            </div>
+            <strong className="insight-bar-value">{row.formatted}</strong>
+          </div>
+        ))}
+        <div className="insight-bar-axis" aria-hidden="true">
+          <span/>
+          <div className="insight-bar-axis-ticks">
+            {display.ticks.map(tick => <span key={tick.value}>{tick.label}</span>)}
+          </div>
+          <span/>
+        </div>
+      </div>
+      {display.clipped > 0 && <div className="insight-chart-footnote">
+        Showing 20 of {display.rows.length + display.clipped} groups; see the query table for the other records.
+      </div>}
+      <div className="insight-chart-caption">Based on executed read-only SQL · Values shown on every bar</div>
+    </section>
+  );
+}
+function RateSummaryCards({ data }: { data: DataResult }) {
+  const summary = rateHighlights(data);
+  if (!summary) return null;
+  return (
+    <div className="rate-summary-grid" aria-label="Verified rate comparison summary">
+      <div className="rate-summary-card">
+        <span className="rate-card-caption">HIGHEST OBSERVED RATE</span>
+        <strong>{summary.higher.rate}</strong>
+        <span className="rate-card-group">{summary.higher.label}</span>
+        <small>{valueText(summary.higher.positive)} positive out of {valueText(summary.higher.total)}</small>
+      </div>
+      <div className="rate-summary-card">
+        <span className="rate-card-caption">LOWEST OBSERVED RATE</span>
+        <strong>{summary.lower.rate}</strong>
+        <span className="rate-card-group">{summary.lower.label}</span>
+        <small>{valueText(summary.lower.positive)} positive out of {valueText(summary.lower.total)}</small>
+      </div>
+      <div className="rate-summary-card rate-summary-difference">
+        <span className="rate-card-caption">DIFFERENCE BETWEEN GROUPS</span>
+        <strong>{summary.difference}</strong>
+        <span className="rate-card-group">Percentage-point gap</span>
+        <small>{valueText(summary.total)} records across all groups</small>
+      </div>
+    </div>
+  );
+}
+
 function ChartView({ answer, view }: { answer: Answer; view: ChartSpec }) {
   const { data } = answer;
   const yKeys = view.yKeys.filter(key => data.columns.some(column => column.name === key)).slice(0, view.type === "line" || view.type === "area" ? 10 : 4);
   const xKey = view.xKey;
   if (!data.columns.some(col => col.name === xKey) || !yKeys.length || !data.rows.length) return null;
   const kind = view.type;
+  const premiumBars = prepareHorizontalBars(data, view);
+  if (premiumBars) return <InsightHorizontalBarChart data={data} view={view}/>;
   if (kind === "card") {
     const rows = data.rows.slice(0, data.rows.length === 1 ? 1 : 4);
     return <section className="viz-card">
@@ -300,16 +376,19 @@ function AnswerCanvas({ answer, question }: { answer: Answer; question: string }
         <h1>Analysis dashboard</h1>
         <p className="answer-question">{question}</p>
       </div>
+      <RateSummaryCards data={data}/>
       {panels.length > 0 ? (
         <div className="charts-grid single-chart">
           {panels.map((panel, index) => (
             <div className="chart-panel-block" key={panel.kind + ":" + index}>
               <ChartView answer={{ data: panel.data, report: { ...report, visualizations: [] }, sql: panel.sql }}
                 view={{ type: panel.kind, title: panel.title, xKey: panel.xKey, yKeys: panel.yKeys }}/>
-              <details className="chart-panel-sql">
-                <summary><Database size={14}/> Executed SQL for {panel.kind} chart <ChevronDown size={14}/></summary>
-                <pre className="executed-sql">{panel.sql}</pre>
-              </details>
+              {panels.length > 1 && (
+                <details className="chart-panel-sql">
+                  <summary><Database size={14}/> Executed SQL for {panel.kind} chart <ChevronDown size={14}/></summary>
+                  <pre className="executed-sql">{panel.sql}</pre>
+                </details>
+              )}
             </div>
           ))}
         </div>
