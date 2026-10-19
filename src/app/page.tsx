@@ -7,8 +7,8 @@ import {
   LockKeyhole, LogOut, MessageSquareText, SendHorizontal, ShieldCheck, Sparkles, Table2, X,
 } from "lucide-react";
 import {
-  Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie,
-  PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie,
+  PieChart, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis,
 } from "recharts";
 
 type SessionStatus = {
@@ -21,10 +21,11 @@ type SessionStatus = {
 };
 type Column = { name: string; type: "number" | "date" | "text" };
 type DataResult = { columns: Column[]; rows: Record<string, unknown>[]; truncated: boolean };
+type ChartSpec = { type: "bar" | "line" | "pie" | "area" | "scatter"; title: string; xKey: string; yKeys: string[] };
 type Report = {
   title: string; summary: string; insights: string[]; caveats: string[];
-  visualization: "bar" | "line" | "pie" | "table" | "kpi";
-  xKey?: string; yKeys?: string[]; suggestedQuestions: string[];
+  visualization: "bar" | "line" | "pie" | "area" | "scatter" | "table" | "kpi";
+  xKey?: string; yKeys?: string[]; visualizations: ChartSpec[]; suggestedQuestions: string[];
 };
 type Answer = { data: DataResult; report: Report; sql: string };
 type Message = {
@@ -78,18 +79,21 @@ function DataTable({ data }: { data: DataResult }) {
     </div>
   );
 }
-function ChartView({ answer }: { answer: Answer }) {
-  const { data, report } = answer;
+function ChartView({ answer, view }: { answer: Answer; view: ChartSpec }) {
+  const { data } = answer;
   const numeric = data.columns.filter((c) => c.type === "number").map((c) => c.name);
-  const yKeys = (report.yKeys || []).filter((c) => numeric.includes(c)).slice(0, 3);
-  const xKey = report.xKey && data.columns.some((c) => c.name === report.xKey) ? report.xKey : undefined;
-  if (!xKey || yKeys.length === 0 || data.rows.length < 2 || report.visualization === "table" || report.visualization === "kpi") return null;
-  const normalized = data.rows.slice(0, report.visualization === "pie" ? 8 : 28)
-    .map((row) => ({ ...row, ...Object.fromEntries(yKeys.map((key) => [key, chartValue(row[key])])) }));
-  const kind = report.visualization;
+  const yKeys = (view.yKeys || []).filter((c) => numeric.includes(c)).slice(0, 3);
+  const xKey = data.columns.some((c) => c.name === view.xKey) ? view.xKey : undefined;
+  if (!xKey || yKeys.length === 0 || data.rows.length < 2) return null;
+  const normalized = data.rows.slice(0, view.type === "pie" ? 8 : 40)
+    .map((row) => ({ ...row, ...Object.fromEntries([
+      ...yKeys.map((key) => [key, chartValue(row[key])]),
+      ...(view.type === "scatter" ? [[xKey, chartValue(row[xKey])]] : []),
+    ]) }));
+  const kind = view.type;
   return (
     <section className="viz-card">
-      <div className="viz-heading"><span><BarChart3 size={16}/> Visual overview</span><span className="viz-hint">Based on query results</span></div>
+      <div className="viz-heading"><span><BarChart3 size={16}/> {view.title}</span><span className="viz-hint">Based on query results</span></div>
       <div className="chart-box">
         <ResponsiveContainer width="100%" height="100%">
           {kind === "pie" ? (
@@ -98,6 +102,23 @@ function ChartView({ answer }: { answer: Answer }) {
                 {normalized.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]}/>)}
               </Pie>
             </PieChart>
+          ) : kind === "scatter" ? (
+            <ScatterChart margin={{ top: 12, right: 22, left: 2, bottom: 10 }}>
+              <CartesianGrid stroke="#edf0f2"/>
+              <XAxis type="number" dataKey={xKey} name={prettyLabel(xKey)} tick={{ fill: "#90949c", fontSize: 11 }}/>
+              <YAxis type="number" dataKey={yKeys[0]} name={prettyLabel(yKeys[0])} tick={{ fill: "#90949c", fontSize: 11 }}/>
+              <Tooltip cursor={{ strokeDasharray: "3 3" }}/>
+              <Scatter data={normalized} fill={COLORS[0]} name={prettyLabel(yKeys[0])}/>
+            </ScatterChart>
+          ) : kind === "area" ? (
+            <AreaChart data={normalized} margin={{ top: 8, right: 16, left: -12, bottom: 6 }}>
+              <CartesianGrid stroke="#edf0f2" vertical={false}/>
+              <XAxis dataKey={xKey} tick={{ fill: "#90949c", fontSize: 11 }} tickLine={false} axisLine={false} minTickGap={26} tickFormatter={(v) => String(v).slice(0, 10)}/>
+              <YAxis tick={{ fill: "#90949c", fontSize: 11 }} tickLine={false} axisLine={false} width={58}/>
+              <Tooltip formatter={(value) => valueText(value)}/>
+              {yKeys.length > 1 && <Legend/>}
+              {yKeys.map((key, i) => <Area key={key} type="monotone" dataKey={key} stroke={COLORS[i]} fill={COLORS[i]} fillOpacity={0.12} strokeWidth={2.4}/>)}
+            </AreaChart>
           ) : kind === "line" ? (
             <LineChart data={normalized} margin={{ top: 8, right: 16, left: -12, bottom: 6 }}>
               <CartesianGrid stroke="#edf0f2" vertical={false} />
@@ -125,6 +146,15 @@ function ChartView({ answer }: { answer: Answer }) {
 function AnswerCanvas({ answer, question }: { answer: Answer; question: string }) {
   const { data, report } = answer;
   const metrics = data.rows.length === 1 ? data.columns.filter((c) => c.type === "number").slice(0, 5) : [];
+  const charts: ChartSpec[] = Array.isArray(report.visualizations) ? report.visualizations : [];
+  if (!charts.length && report.xKey && report.yKeys?.length && ["bar", "line", "pie", "area", "scatter"].includes(report.visualization)) {
+    charts.push({
+      type: report.visualization as ChartSpec["type"],
+      title: "Visual overview",
+      xKey: report.xKey,
+      yKeys: report.yKeys,
+    });
+  }
   return (
     <div className="answer-canvas">
       <div className="answer-heading">
@@ -143,7 +173,7 @@ function AnswerCanvas({ answer, question }: { answer: Answer; question: string }
           ))}
         </div>
       )}
-      <ChartView answer={answer}/>
+      {charts.map((view, index) => <ChartView answer={answer} view={view} key={view.type + index}/>)}
       <section className="viz-card table-section">
         <div className="viz-heading"><span><Table2 size={16}/> Query results <span className="count-chip">{data.rows.length}{data.truncated ? "+" : ""} rows</span></span></div>
         {data.rows.length ? <DataTable data={data}/> : <div className="no-rows">No rows matched your question. Try adjusting the filters or time range.</div>}
