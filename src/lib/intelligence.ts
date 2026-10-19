@@ -196,7 +196,7 @@ export function chartQueryFor(kind: ChartKind, profile: ProjectProfile): ChartQu
       from + " WHERE " + d + " IS NOT NULL GROUP BY 1 ORDER BY 1 ASC LIMIT 48";
     return { kind, title: table.name + " · Monthly record trend", sql, xKey:"dimension", yKeys:["records"] };
   }
-  if ((["line", "area", "bar", "column", "heatmap", "scatter", "combo", "stacked-column"].includes(kind)) && numeric) {
+  if ((["bar", "column"].includes(kind)) && numeric) {
     const expr = numericValueExpression(numeric.column);
     const sql = "SELECT item.value::text AS dimension, COUNT(*)::integer AS records FROM (SELECT " + expr +
       " AS value" + from + ") AS item WHERE item.value IS NOT NULL GROUP BY item.value ORDER BY item.value ASC LIMIT 40";
