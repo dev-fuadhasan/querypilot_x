@@ -55,19 +55,26 @@ test("chart-only requests are separated from requests with explicit metrics",()=
   assert.equal(isChartOnlyRequest("Generate a pie chart and a line chart"),true);
   assert.equal(isChartOnlyRequest("Make a pie and line graph of revenue by month"),false);
 });
-test("two separate, read-only, schema-qualified queries for pie and ordered numeric line charts",async()=>{
+test("categorical shares use pie and numeric frequencies use bars, not fake timelines",async()=>{
   const profile=await inspectProject([sales],async()=>salesRows);
   const pie=chartQueryFor("pie",profile);
+  const bar=chartQueryFor("bar",profile);
   const line=chartQueryFor("line",profile);
-  assert.ok(pie && line);
-  assert.equal(pie.kind,"pie");
-  assert.equal(line.kind,"line");
+  assert.ok(pie&&bar);
+  assert.equal(line,null);
   assert.match(pie.sql,/ELSE 'Other'/);
-  assert.match(line.sql,/ORDER BY item.value ASC/);
   assert.ok(pie.sql.includes('FROM public."sales_data"'));
-  assert.ok(line.sql.includes('FROM public."sales_data"'));
   assert.equal(parse(pie.sql)[0].type,"select");
-  assert.equal(parse(line.sql)[0].type,"select");
+  assert.equal(parse(bar.sql)[0].type,"select");
+  assert.ok(profile.starters.every(q=>!q.includes("line graph")));
+});
+test("dated datasets can still produce monthly chronological line queries",()=>{
+ const profile={tables:[{name:"events",categories:[],numeric:[],dates:["created_at"],sampleSize:12}],starters:[]};
+ const line=chartQueryFor("line",profile);
+ assert.ok(line);
+ assert.match(line.sql,/DATE_TRUNC\('month'/);
+ assert.match(line.sql,/ORDER BY 1 ASC/);
+ assert.equal(parse(line.sql)[0].type,"select");
 });
 test("starter questions never assume a particular user's business domain",()=>{
   const starters=starterQuestions([{ name:"research_records",
