@@ -95,7 +95,7 @@ export function resultToData(rows:Record<string,unknown>[]):DataResult {
      : rows.some(row => {
          const sample = row[name];
          return typeof sample === "number" ? !Number.isInteger(sample)
-           : typeof sample === "string" && /[.eE]/.test(sample) && /^-?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?$/.test(sample);
+           : typeof sample === "string" && /[.eE]/.test(sample) && /^-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(sample);
        }) ? "decimal" : "integer";
    return {name,type,numericKind};
  }):[];
