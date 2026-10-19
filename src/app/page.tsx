@@ -883,13 +883,13 @@ export default function Home() {
               )}
             </div>
             <div className="composer-wrap">
-              {!session.aiConfigured && <div className="config-hint">Set GEMINI_API_KEY or GROQ_API_KEY in Vercel to enable AI analysis.</div>}
+              {!session.aiConfigured && <div className="config-hint">Basic supported database questions remain available. Configure GEMINI_API_KEY or GROQ_API_KEY for advanced questions.</div>}
               <form className="composer" onSubmit={(event) => {event.preventDefault(); askQuestion(question);}}>
                 <textarea rows={2} value={question} maxLength={700} disabled={asking}
                   onChange={(event) => setQuestion(event.target.value)}
                   onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) {event.preventDefault(); askQuestion(question);} }}
                   placeholder="Ask anything about your data…" aria-label="Ask your database"/>
-                <div className="composer-bottom"><span><LockKeyhole size={12}/> Read-only access</span><button className="send-button" disabled={!question.trim() || asking || !session.aiConfigured} title="Send message" aria-label="Send message">
+                <div className="composer-bottom"><span><LockKeyhole size={12}/> Read-only access</span><button className="send-button" disabled={!question.trim() || asking} title="Send message" aria-label="Send message">
                   {asking ? <LoaderCircle size={17} className="spin"/> : <SendHorizontal size={17}/>}
                 </button></div>
               </form>

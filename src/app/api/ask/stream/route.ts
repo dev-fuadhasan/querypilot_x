@@ -11,6 +11,7 @@ import { requestedChartTypes } from "@/lib/charts";
 import type { ChartKind } from "@/lib/charts";
 import { SqlValidationError } from "@/lib/sql-guard";
 import { resolveTableScope, simpleRequest, identifyQuestionTable } from "@/lib/table-routing";
+import { planVerifiedBinaryRate } from "@/lib/rate-analysis";
 import { recognizeEntityTrend, recognizeTopRanking, temporalTrendQuery, pivotTemporalTrend, missingTrendChoices, topRankingSql } from "@/lib/trend";
 
 export const runtime = "nodejs";
@@ -87,6 +88,29 @@ export async function POST(request: NextRequest) {
           if (active.mode === "oauth") return managementReadOnly(active, sql);
           return (await executeQuery(active.dbUrl || "", sql)).rows;
         });
+        // Compare rates only after verifying the requested outcome is genuinely binary
+        // and the grouping field contains actual categories in this connected project.
+        const verifiedRate = await planVerifiedBinaryRate(question, schema, async sql => {
+          const approved = guardSql(sql);
+          enforceTables(approved, schema);
+          return active.mode === "oauth" ? managementReadOnly(active, approved)
+            : (await executeQuery(active.dbUrl || "", approved)).rows;
+        });
+        if (verifiedRate) {
+          const sql = guardSql(verifiedRate.sql);
+          enforceTables(sql, schema);
+          send({ type: "stage", stage: "executing",
+            detail: "Calculating verified " + verifiedRate.title + " from " + verifiedRate.table, sql });
+          const data = active.mode === "oauth" ? await executeOAuthQuery(active, sql)
+            : await executeQuery(active.dbUrl || "", sql);
+          const report = await explainResult(question, sql, data);
+          const panels = data.rows.length ? [{
+            kind: "bar" as const, title: verifiedRate.title, data, sql,
+            xKey: verifiedRate.xKey, yKeys: verifiedRate.yKeys
+          }] : [];
+          send({ type: "result", data, report, sql, panels });
+          return;
+        }
         // Answer resolvable list and ranking disambiguation requests without a model call.
         const straightforward = simpleRequest(question, schema);
         if (straightforward && "sql" in straightforward) {

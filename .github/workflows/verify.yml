@@ -32,6 +32,8 @@ jobs:
         run: node --experimental-strip-types --test tests/trend.test.mjs
       - name: All-tables scope and real dataset routing
         run: node --experimental-strip-types --test tests/table-routing.test.mjs
+      - name: Verified binary outcome and category rate tests
+        run: node --experimental-strip-types --test tests/rate-analysis.test.mjs
       - name: Type-check
         run: npm run typecheck
       - name: Production build
