@@ -1,0 +1,418 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import {
+  ArrowRight, ArrowUpRight, BarChart3, Check, CheckCircle2, ChevronDown,
+  CircleHelp, Database, Eye, EyeOff, FileText, Layers3, LoaderCircle,
+  LockKeyhole, LogOut, MessageSquareText, SendHorizontal, ShieldCheck, Sparkles, Table2, X,
+} from "lucide-react";
+import {
+  Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie,
+  PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
+} from "recharts";
+
+type SessionStatus = {
+  connected: boolean;
+  projectName: string;
+  projects: { id: string; name: string }[];
+  oauthEnabled: boolean;
+  configured: boolean;
+  aiConfigured: boolean;
+};
+type Column = { name: string; type: "number" | "date" | "text" };
+type DataResult = { columns: Column[]; rows: Record<string, unknown>[]; truncated: boolean };
+type Report = {
+  title: string; summary: string; insights: string[]; caveats: string[];
+  visualization: "bar" | "line" | "pie" | "table" | "kpi";
+  xKey?: string; yKeys?: string[]; suggestedQuestions: string[];
+};
+type Answer = { data: DataResult; report: Report; sql: string };
+type Message = {
+  id: number; role: "user" | "assistant"; text: string;
+  options?: string[]; original?: string;
+};
+type AskReply =
+  | { type: "clarification"; question: string; options: string[]; originalQuestion: string }
+  | ({ type: "result" } & Answer);
+
+const COLORS = ["#6366f1", "#059669", "#f59e0b", "#3b82f6", "#e879f9", "#f97316"];
+const EXAMPLES = ["How did sales perform last month?", "Show the top products by revenue", "Compare this month with the previous month"];
+
+function SupabaseMark({ size = 23 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M12.64 1.5c.45-.55 1.35-.23 1.35.49v9.03h6.42c.65 0 1 .74.6 1.23L11.36 22.5c-.45.55-1.35.23-1.35-.49v-9.03H3.59c-.65 0-1-.74-.6-1.23L12.64 1.5Z" fill="#3ECF8E" />
+      <path d="M10.01 12.98h3.98v8.03L11.36 22.5c-.45.55-1.35.23-1.35-.49v-9.03Z" fill="#20A879" />
+    </svg>
+  );
+}
+function Brand({ small = false }: { small?: boolean }) {
+  return (
+    <div className={"brand " + (small ? "brand-small" : "")}>
+      <span className="brand-icon"><Layers3 size={small ? 17 : 21} strokeWidth={2.2}/></span>
+      <span>QueryPilot <strong>X</strong></span>
+    </div>
+  );
+}
+function valueText(value: unknown): string {
+  if (value === null || value === undefined) return "—";
+  if (typeof value === "number") return Number.isFinite(value) ? new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value) : "—";
+  if (typeof value === "string" && /^-?\d+(\.\d+)?$/.test(value) && value.length < 18) return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(Number(value));
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+function prettyLabel(name: string) { return name.replace(/_/g, " ").replace(/\b\w/g, (a) => a.toUpperCase()); }
+function chartValue(value: unknown) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+function DataTable({ data }: { data: DataResult }) {
+  return (
+    <div className="data-table-scroll">
+      <table className="data-table">
+        <thead><tr><th className="row-index">#</th>{data.columns.map((col) => <th key={col.name}>{prettyLabel(col.name)}</th>)}</tr></thead>
+        <tbody>{data.rows.map((row, index) => (
+          <tr key={index}><td className="row-index">{index + 1}</td>{data.columns.map((col) => <td key={col.name} title={valueText(row[col.name])}>{valueText(row[col.name])}</td>)}</tr>
+        ))}</tbody>
+      </table>
+    </div>
+  );
+}
+function ChartView({ answer }: { answer: Answer }) {
+  const { data, report } = answer;
+  const numeric = data.columns.filter((c) => c.type === "number").map((c) => c.name);
+  const yKeys = (report.yKeys || []).filter((c) => numeric.includes(c)).slice(0, 3);
+  const xKey = report.xKey && data.columns.some((c) => c.name === report.xKey) ? report.xKey : undefined;
+  if (!xKey || yKeys.length === 0 || data.rows.length < 2 || report.visualization === "table" || report.visualization === "kpi") return null;
+  const normalized = data.rows.slice(0, report.visualization === "pie" ? 8 : 28)
+    .map((row) => ({ ...row, ...Object.fromEntries(yKeys.map((key) => [key, chartValue(row[key])])) }));
+  const kind = report.visualization;
+  return (
+    <section className="viz-card">
+      <div className="viz-heading"><span><BarChart3 size={16}/> Visual overview</span><span className="viz-hint">Based on query results</span></div>
+      <div className="chart-box">
+        <ResponsiveContainer width="100%" height="100%">
+          {kind === "pie" ? (
+            <PieChart><Tooltip formatter={(value) => valueText(value)}/><Legend />
+              <Pie data={normalized} dataKey={yKeys[0]} nameKey={xKey} cx="50%" cy="48%" outerRadius="77%" innerRadius="52%" paddingAngle={2}>
+                {normalized.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]}/>)}
+              </Pie>
+            </PieChart>
+          ) : kind === "line" ? (
+            <LineChart data={normalized} margin={{ top: 8, right: 16, left: -12, bottom: 6 }}>
+              <CartesianGrid stroke="#edf0f2" vertical={false} />
+              <XAxis dataKey={xKey} tick={{ fill: "#90949c", fontSize: 11 }} tickLine={false} axisLine={false} minTickGap={26} tickFormatter={(v) => String(v).slice(0, 10)}/>
+              <YAxis tick={{ fill: "#90949c", fontSize: 11 }} tickLine={false} axisLine={false} width={58} />
+              <Tooltip formatter={(value) => valueText(value)} />
+              {yKeys.length > 1 && <Legend />}
+              {yKeys.map((key, i) => <Line key={key} type="monotone" dataKey={key} stroke={COLORS[i]} strokeWidth={2.6} dot={{ r: 2.5 }} activeDot={{ r: 5 }}/>)}
+            </LineChart>
+          ) : (
+            <BarChart data={normalized} margin={{ top: 10, right: 16, left: -12, bottom: 6 }}>
+              <CartesianGrid stroke="#edf0f2" vertical={false} />
+              <XAxis dataKey={xKey} tick={{ fill: "#90949c", fontSize: 11 }} tickLine={false} axisLine={false} interval="preserveStartEnd" tickFormatter={(v) => String(v).slice(0, 17)}/>
+              <YAxis tick={{ fill: "#90949c", fontSize: 11 }} tickLine={false} axisLine={false} width={58}/>
+              <Tooltip formatter={(value) => valueText(value)}/>
+              {yKeys.length > 1 && <Legend />}
+              {yKeys.map((key, i) => <Bar key={key} dataKey={key} fill={COLORS[i]} radius={[4, 4, 0, 0]} maxBarSize={52}/>)}
+            </BarChart>
+          )}
+        </ResponsiveContainer>
+      </div>
+    </section>
+  );
+}
+function AnswerCanvas({ answer, question }: { answer: Answer; question: string }) {
+  const { data, report } = answer;
+  const metrics = data.rows.length === 1 ? data.columns.filter((c) => c.type === "number").slice(0, 5) : [];
+  return (
+    <div className="answer-canvas">
+      <div className="answer-heading">
+        <div className="eyebrow"><Sparkles size={13}/> AI-POWERED ANALYSIS</div>
+        <h1>{report.title}</h1>
+        <p className="answer-question">{question}</p>
+      </div>
+      <div className="answer-description">{report.summary}</div>
+      {metrics.length > 0 && (
+        <div className="metric-grid">
+          {metrics.map((col, i) => (
+            <div className="metric-card" key={col.name}>
+              <div className="metric-top"><span>{prettyLabel(col.name)}</span><span className="metric-dot" style={{ background: COLORS[i % COLORS.length] }}/></div>
+              <div className="metric-value">{valueText(data.rows[0][col.name])}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      <ChartView answer={answer}/>
+      <section className="viz-card table-section">
+        <div className="viz-heading"><span><Table2 size={16}/> Query results <span className="count-chip">{data.rows.length}{data.truncated ? "+" : ""} rows</span></span></div>
+        {data.rows.length ? <DataTable data={data}/> : <div className="no-rows">No rows matched your question. Try adjusting the filters or time range.</div>}
+        {data.truncated && <p className="table-footnote">Preview is limited to the first 200 rows.</p>}
+      </section>
+      <section className="analysis-card">
+        <div className="viz-heading"><span><FileText size={17}/> AI analysis report</span><span className="report-badge"><CheckCircle2 size={13}/> Database-backed</span></div>
+        {report.insights.length ? (
+          <div className="insight-list">{report.insights.map((item, index) => <div className="insight" key={index}><span className="insight-number">{String(index + 1).padStart(2, "0")}</span><p>{item}</p></div>)}</div>
+        ) : <p className="analysis-copy">{report.summary}</p>}
+        {report.caveats.length > 0 && <div className="caveat"><CircleHelp size={15}/><div>{report.caveats.join(" ")}</div></div>}
+        <details className="sql-disclosure">
+          <summary><span><Database size={15}/> View executed SQL</span><ChevronDown size={15}/></summary>
+          <pre>{answer.sql}</pre>
+        </details>
+      </section>
+    </div>
+  );
+}
+let messageCounter = 0;
+function nextMessage() { messageCounter += 1; return messageCounter; }
+
+export default function Home() {
+  const [session, setSession] = useState<SessionStatus | null>(null);
+  const [phase, setPhase] = useState<"landing" | "setup" | "workspace">("landing");
+  const [databaseUri, setDatabaseUri] = useState("");
+  const [showUri, setShowUri] = useState(false);
+  const [projectRef, setProjectRef] = useState("");
+  const [connecting, setConnecting] = useState(false);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [question, setQuestion] = useState("");
+  const [currentQuestion, setCurrentQuestion] = useState("");
+  const [answer, setAnswer] = useState<Answer | null>(null);
+  const [asking, setAsking] = useState(false);
+  const [toast, setToast] = useState<{ text: string; error?: boolean } | null>(null);
+  const messagesRef = useRef<HTMLDivElement>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function notify(text: string, error = false) {
+    setToast({ text, error });
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 4800);
+  }
+  useEffect(() => {
+    let active = true;
+    fetch("/api/session", { cache: "no-store" }).then(async (res) => {
+      if (!res.ok) throw new Error("Cannot load the workspace.");
+      return await res.json() as SessionStatus;
+    }).then((data) => {
+      if (!active) return;
+      setSession(data);
+      const params = new URLSearchParams(window.location.search);
+      if (data.connected) setPhase("workspace");
+      else if (params.has("setup") || data.projects.length) setPhase("setup");
+      if (data.projects.length) setProjectRef(data.projects[0].id);
+      const err = params.get("error");
+      if (err) notify(err, true);
+      if (params.has("setup") || err) window.history.replaceState({}, "", "/");
+    }).catch((err) => { if (active) notify(err instanceof Error ? err.message : "Could not start the application.", true); });
+    return () => { active = false; };
+  }, []);
+  useEffect(() => {
+    const el = messagesRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages, asking]);
+
+  function beginConnect() {
+    if (!session?.configured) return notify("Set SESSION_SECRET on Vercel before connecting.", true);
+    if (session.oauthEnabled) window.location.assign("/api/auth/start");
+    else setPhase("setup");
+  }
+  async function connectDatabase(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!databaseUri.trim() || connecting) return;
+    setConnecting(true);
+    try {
+      const res = await fetch("/api/connect", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ uri: databaseUri.trim(), projectRef }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Connection failed.");
+      setSession((old) => old ? { ...old, connected: true, projectName: data.projectName } : old);
+      setDatabaseUri("");
+      setPhase("workspace");
+      notify("Your database is connected.");
+    } catch (err) { notify(err instanceof Error ? err.message : "Could not connect.", true); }
+    finally { setConnecting(false); }
+  }
+  async function disconnect() {
+    try {
+      const res = await fetch("/api/disconnect", { method: "POST" });
+      if (!res.ok) throw new Error("Could not disconnect.");
+      setAnswer(null);
+      setMessages([]);
+      setSession((old) => old ? { ...old, connected: false, projects: [], projectName: "" } : old);
+      setPhase("landing");
+      notify("Database disconnected.");
+    } catch { notify("Could not disconnect. Please retry.", true); }
+  }
+  async function askQuestion(text: string, displayText?: string) {
+    const prompt = text.trim();
+    if (!prompt || asking || !session?.connected) return;
+    setQuestion("");
+    setAsking(true);
+    setMessages((old) => [...old, { id: nextMessage(), role: "user", text: displayText || prompt }]);
+    try {
+      const res = await fetch("/api/ask", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: prompt }),
+      });
+      const data = await res.json() as AskReply & { error?: string };
+      if (!res.ok) throw new Error(data.error || "Could not analyze the database.");
+      if (data.type === "clarification") {
+        setMessages((old) => [...old, {
+          id: nextMessage(), role: "assistant", text: data.question,
+          options: data.options, original: data.originalQuestion,
+        }]);
+      } else {
+        setAnswer({ data: data.data, report: data.report, sql: data.sql });
+        setCurrentQuestion(displayText ? prompt : text);
+        setMessages((old) => [...old, {
+          id: nextMessage(), role: "assistant",
+          text: data.data.rows.length ? "Your analysis is ready. I've placed the results and report in the workspace." : "The query ran successfully, but no matching records were found. See the workspace for details.",
+        }]);
+      }
+    } catch (err) {
+      setMessages((old) => [...old, {
+        id: nextMessage(), role: "assistant",
+        text: err instanceof Error ? err.message : "Something went wrong. Please try again.",
+      }]);
+    } finally { setAsking(false); }
+  }
+
+  return (
+    <div className="app-root">
+      {phase === "landing" || !session ? (
+        <div className="onboarding">
+          <div className="onboard-brand"><Brand/></div>
+          <main className="welcome">
+            <div className="welcome-symbol"><Database size={30} strokeWidth={1.65}/></div>
+            <div className="welcome-eyebrow">INTELLIGENT DATABASE ANALYTICS</div>
+            <h1>Your data,<br/><em>answered.</em></h1>
+            <p>Connect your database. Ask your questions.<br/>Understand the answers.</p>
+            <button className="black-button" disabled={!session} onClick={beginConnect}>
+              <SupabaseMark size={22}/><span>Connect your database</span><ArrowRight size={17}/>
+            </button>
+            <div className="welcome-foot"><ShieldCheck size={15}/> Secure connection with Supabase</div>
+          </main>
+          <div className="onboard-footer">QUERYPILOT X <span>·</span> BUILT FOR BETTER DECISIONS</div>
+        </div>
+      ) : phase === "setup" ? (
+        <div className="onboarding">
+          <div className="onboard-brand"><Brand/></div>
+          <main className="setup-shell">
+            <button className="back-link" onClick={() => setPhase("landing")}><ArrowRight size={16}/> Back</button>
+            <div className="setup-icon"><SupabaseMark size={31}/></div>
+            <h1>Connect your database</h1>
+            <p>Enter the PostgreSQL connection string from your Supabase project's Connect dialog.</p>
+            <form className="connect-form" onSubmit={connectDatabase}>
+              {session.projects.length > 0 && (
+                <label className="form-group">
+                  <span>Supabase project</span>
+                  <select value={projectRef} onChange={(event) => setProjectRef(event.target.value)}>
+                    {session.projects.map((project) => <option value={project.id} key={project.id}>{project.name}</option>)}
+                  </select>
+                </label>
+              )}
+              <label className="form-group">
+                <span>PostgreSQL connection string</span>
+                <div className="secret-input">
+                  <input value={databaseUri} onChange={(event) => setDatabaseUri(event.target.value)}
+                    type={showUri ? "text" : "password"} spellCheck={false} autoComplete="off"
+                    placeholder="postgresql://user.project-ref:password@...pooler.supabase.com:5432/postgres" required/>
+                  <button type="button" aria-label={showUri ? "Hide credentials" : "Show credentials"} onClick={() => setShowUri(!showUri)}>
+                    {showUri ? <EyeOff size={17}/> : <Eye size={17}/>}
+                  </button>
+                </div>
+              </label>
+              <button className="black-button full" type="submit" disabled={connecting || !databaseUri.trim()}>
+                {connecting ? <LoaderCircle size={18} className="spin"/> : <LockKeyhole size={17}/>}
+                {connecting ? "Verifying connection…" : "Connect securely"}<ArrowRight size={17}/>
+              </button>
+            </form>
+            <div className="setup-help">
+              <ShieldCheck size={17}/><span>Stored in an encrypted, HttpOnly session. Queries are read-only. For best security, use a dedicated SELECT-only database role.</span>
+            </div>
+            <a className="doc-link" href="https://supabase.com/docs/guides/database/connecting-to-postgres" target="_blank" rel="noreferrer">
+              Where can I find my connection string? <ArrowUpRight size={14}/>
+            </a>
+          </main>
+          <div className="onboard-footer">QUERYPILOT X <span>·</span> SECURE BY DESIGN</div>
+        </div>
+      ) : (
+        <div className="workspace">
+          <section className="workspace-main">
+            <header className="workspace-header">
+              <Brand small/>
+              <div className="header-right">
+                <div className="connected-pill"><span className="online-indicator"/><SupabaseMark size={16}/><span className="connected-name">{session.projectName}</span><Check size={14}/></div>
+                <button className="icon-button" title="Disconnect database" aria-label="Disconnect database" onClick={disconnect}><LogOut size={17}/></button>
+              </div>
+            </header>
+            <main className="results-scroll">
+              {!answer ? (
+                <div className="empty-results">
+                  <div className="empty-icon"><Sparkles size={26} strokeWidth={1.5}/></div>
+                  <h2>Ask. Analyze. Understand.</h2>
+                  <p>Your insights will appear here.<br/>Start with a question in the chat.</p>
+                  <div className="empty-divider"/>
+                  <div className="empty-powered"><span className="online-indicator"/> Database ready for analysis</div>
+                </div>
+              ) : <AnswerCanvas answer={answer} question={currentQuestion}/>}
+            </main>
+          </section>
+          <aside className="chat-panel">
+            <div className="chat-top">
+              <div className="chat-heading"><div className="chat-avatar"><MessageSquareText size={17}/></div><div><h2>Ask QueryPilot</h2><p>AI database assistant</p></div></div>
+              <div className="chat-online"><span className="online-indicator"/> Online</div>
+            </div>
+            <div className="messages-scroll" ref={messagesRef}>
+              <div className="chat-intro"><span className="chat-intro-symbol"><Sparkles size={18}/></span><h3>What would you like to know?</h3><p>Ask a question about your connected database in plain English.</p></div>
+              {messages.length === 0 && (
+                <div className="suggestions">
+                  {EXAMPLES.map((example) => <button key={example} onClick={() => askQuestion(example)} disabled={asking}>{example}<ArrowUpRight size={15}/></button>)}
+                </div>
+              )}
+              {messages.map((message) => (
+                <div key={message.id} className={"message-row " + message.role}>
+                  {message.role === "assistant" && <span className="assistant-badge"><Sparkles size={13}/></span>}
+                  <div className="message-content">
+                    <div className="message-bubble">{message.text}</div>
+                    {message.options && (
+                      <div className="clarification-options">{message.options.map((option) =>
+                        <button key={option} disabled={asking} onClick={() => askQuestion(message.original + ". Clarification: " + option, option)}>
+                          {option}<ArrowRight size={14}/>
+                        </button>
+                      )}</div>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {asking && <div className="typing"><LoaderCircle size={16} className="spin"/> Checking your database and preparing the answer…</div>}
+              {answer && !asking && messages.length > 0 && answer.report.suggestedQuestions.length > 0 && (
+                <div className="follow-up-questions">
+                  <div className="follow-up-title">KEEP EXPLORING</div>
+                  {answer.report.suggestedQuestions.map((suggestion) => <button key={suggestion} onClick={() => askQuestion(suggestion)}>{suggestion}<ArrowUpRight size={13}/></button>)}
+                </div>
+              )}
+            </div>
+            <div className="composer-wrap">
+              {!session.aiConfigured && <div className="config-hint">Set OPENAI_API_KEY in Vercel to enable analysis.</div>}
+              <form className="composer" onSubmit={(event) => {event.preventDefault(); askQuestion(question);}}>
+                <textarea rows={2} value={question} maxLength={700} disabled={asking}
+                  onChange={(event) => setQuestion(event.target.value)}
+                  onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) {event.preventDefault(); askQuestion(question);} }}
+                  placeholder="Ask anything about your data…" aria-label="Ask your database"/>
+                <div className="composer-bottom"><span><LockKeyhole size={12}/> Read-only access</span><button className="send-button" disabled={!question.trim() || asking || !session.aiConfigured} title="Send message" aria-label="Send message">
+                  {asking ? <LoaderCircle size={17} className="spin"/> : <SendHorizontal size={17}/>}
+                </button></div>
+              </form>
+              <div className="composer-caption">QueryPilot can make mistakes. Verify important insights.</div>
+            </div>
+          </aside>
+        </div>
+      )}
+      {toast && <div className={"toast " + (toast.error ? "toast-error" : "")} role="status">
+        {toast.error ? <X size={16}/> : <CheckCircle2 size={17}/>}<span>{toast.text}</span>
+        <button onClick={() => setToast(null)} aria-label="Dismiss notification"><X size={14}/></button>
+      </div>}
+    </div>
+  );
+}
