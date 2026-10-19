@@ -111,7 +111,7 @@ test("survival comparison has correctly labeled percent metric, not an invented 
  rows:[{group_name:"Female",rate_pct:74.12},{group_name:"Male",rate_pct:19.89}]};
  const chart=buildDashboardCharts("Compare survival rate by sex",data)[0];
  assert.equal(chart.unit,"%");
- assert.equal(chart.yLabel,"Rate (%)");
+ assert.equal(chart.yLabel,"Survival Rate (%)");
  assert.equal(chart.xLabel,"Sex");
 });
 test("category comparison is never silently presented as a time trend",()=>{
