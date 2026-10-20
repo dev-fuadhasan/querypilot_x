@@ -42,6 +42,17 @@ jobs:
         run: node --experimental-strip-types --test tests/format-values.test.mjs
       - name: Scoped relationship analysis and contextual follow-up regression tests
         run: node --experimental-strip-types --test tests/relationship-analysis.test.mjs
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install Matplotlib figure runtime
+        run: python -m pip install -r requirements.txt
+      - name: Python static figure and PNG rendering tests
+        env:
+          MPLBACKEND: Agg
+          MPLCONFIGDIR: /tmp/matplotlib-ci-config
+        run: python -m unittest discover -s tests -p test_figures.py -v
       - name: Type-check
         run: npm run typecheck
       - name: Production build

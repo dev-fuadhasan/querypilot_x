@@ -427,3 +427,28 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .chart-explanation{font-size:10px;line-height:1.6;color:#7b8594;margin:2px 20px 15px}
 .charts-grid .chart-box{min-height:320px;padding:18px 18px 30px 18px}
 @media(max-width:720px){.chart-context{padding:10px 14px 0;font-size:10px}.charts-grid .chart-box{min-height:280px;height:280px;padding:12px 10px 30px}}
+
+
+/* Matplotlib static figures: full-width, vertically stacked, no chart interaction. */
+.charts-grid,.charts-grid.single-chart{display:grid!important;grid-template-columns:minmax(0,1fr)!important;gap:20px;min-width:0}
+.static-figure-card{min-width:0;overflow:hidden;border-radius:14px;background:#fff;border:1px solid #e5e9f0;box-shadow:0 7px 26px rgba(25,34,55,.035)}
+.static-figure-card .viz-heading{min-height:55px;gap:12px;flex-wrap:wrap}
+.static-figure-card .viz-heading span:first-child{min-width:0;overflow-wrap:anywhere}
+.static-figure-card .viz-hint{color:#8490a0;letter-spacing:.07em;font-weight:750;font-size:10px}
+.static-figure-content{margin:0;padding:12px clamp(8px,2vw,24px) 0;display:flex;flex-direction:column;align-items:stretch;gap:8px}
+.static-figure-image{display:block;width:100%;height:auto;max-height:850px;object-fit:contain;background:#fff;border:0}
+.static-figure-footer{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:13px clamp(7px,1vw,16px);color:#8793a1;font-size:11px;border-top:1px solid #edf0f4}
+.static-figure-download{display:inline-flex;gap:8px;align-items:center;color:#4d60ad;text-decoration:none;font-weight:700;border:1px solid #dde4f4;border-radius:8px;padding:8px 13px;background:#f8faff}
+.static-figure-download:hover{background:#ebf0ff;color:#384e9e}
+.static-figure-download:focus-visible{outline:2px solid #6e84ce;outline-offset:2px}
+.static-figure-status{min-height:225px;display:flex;justify-content:center;align-items:center;gap:12px;padding:28px;text-align:center;color:#7c8896;font-size:12px;line-height:1.8}
+.static-figure-status svg{flex-shrink:0}
+.static-figure-error{color:#975a43;background:#fffaf8}
+@media(max-width:720px){
+ .static-figure-content{padding:6px 6px 0}
+ .static-figure-card .viz-heading{padding:12px}
+ .static-figure-card .viz-hint{font-size:8px}
+ .static-figure-footer{padding:10px;font-size:10px}
+ .static-figure-download{padding:8px 10px;font-size:10px}
+ .static-figure-status{min-height:150px;padding:18px}
+}

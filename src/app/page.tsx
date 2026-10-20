@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { initialProjectRef, resolveStartupPhase } from "@/lib/connection-flow";
 import { buildDashboardCharts, requestedChartTypes } from "@/lib/charts";
-import { prepareHorizontalBars, rateHighlights } from "@/lib/visualization-data";
+import { rateHighlights } from "@/lib/visualization-data";
+import { StaticFigure } from "@/components/StaticFigure";
 import { contextualizeClarification, shouldUseClarificationContext } from "@/lib/clarification-context";
 import type { RelationshipIntent } from "@/lib/relationship-analysis";
 import { formatDisplayValue } from "@/lib/format-values";
@@ -13,11 +14,6 @@ import {
   CircleHelp, Database, Eye, EyeOff, Layers3, LoaderCircle,
   LockKeyhole, LogOut, MessageSquareText, SendHorizontal, ShieldCheck, Sparkles, Table2, X,
 } from "lucide-react";
-import {
-  Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line, LineChart, Pie,
-  PieChart, PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart,
-  ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis,
-} from "recharts";
 
 type SessionStatus = {
   connected: boolean;
@@ -64,7 +60,7 @@ const STAGES: { stage: ProgressStage; label: string; description: string }[] = [
   { stage: "report", label: "Render charts", description: "Preparing requested visuals" },
 ];
 
-const COLORS = ["#6366f1", "#059669", "#f59e0b", "#3b82f6", "#e879f9", "#f97316"];
+
 
 
 function SupabaseMark({ size = 23 }: { size?: number }) {
@@ -103,90 +99,6 @@ function DataTable({ data }: { data: DataResult }) {
     </div>
   );
 }
-function chartNumber(value: unknown): number | null {
-  if (value === null || value === undefined || value === "") return null;
-  const n = Number(value);
-  return Number.isFinite(n) ? n : null;
-}
-function HeatmapView({ data, view }: { data: DataResult; view: ChartSpec }) {
-  const categoryColumn = data.columns.find(col => col.name === view.xKey);
-  const rows = data.rows.slice(0, 22);
-  const columns = view.yKeys.slice(0, 5);
-  const valid = rows.flatMap(row => columns.map(key => chartNumber(row[key])).filter((v): v is number => v !== null));
-  const min = valid.length ? Math.min(...valid) : 0;
-  const max = valid.length ? Math.max(...valid) : 0;
-  return (
-    <div className="heatmap-wrap" aria-label={view.title + " data heatmap"} role="table">
-      <div className="heatmap-header" style={{ gridTemplateColumns: "minmax(120px,1.5fr) repeat(" + columns.length + ",minmax(68px,1fr))" }}>
-        <span>{prettyLabel(view.xKey)}</span>{columns.map(key => <span key={key}>{prettyLabel(key)}</span>)}
-      </div>
-      {rows.map((row, index) => (
-        <div className="heatmap-row" role="row" key={index}
-          style={{ gridTemplateColumns: "minmax(120px,1.5fr) repeat(" + columns.length + ",minmax(68px,1fr))" }}>
-          <span className="heatmap-row-label" title={valueText(row[view.xKey], categoryColumn)}>{valueText(row[view.xKey], categoryColumn)}</span>
-          {columns.map(key => {
-            const n = chartNumber(row[key]);
-            const metricColumn = data.columns.find(col => col.name === key);
-            const strength = n === null ? 0 : max === min ? 0.5 : (n - min) / (max - min);
-            return <span className="heatmap-cell" key={key}
-              title={prettyLabel(key) + ": " + (n === null ? "No value" : valueText(row[key], metricColumn))}
-              style={{ background: n === null ? "#f3f4f6" : "rgba(53,119,197," + (0.1 + strength * 0.7).toFixed(3) + ")",
-                color: strength > .62 ? "#fff" : "#24354a" }}>
-              {n === null ? "—" : valueText(row[key], metricColumn)}
-            </span>;
-          })}
-        </div>
-      ))}
-      {data.rows.length > rows.length && <div className="heatmap-footnote">Showing first {rows.length} rows. All query rows remain available in the table below.</div>}
-    </div>
-  );
-}
-function InsightHorizontalBarChart({ data, view }: { data: DataResult; view: ChartSpec }) {
-  const display = prepareHorizontalBars(data, view);
-  if (!display) return null;
-  const barColors = ["#5c67dc", "#18a48c", "#a277e1", "#ee9e3a", "#268bc1", "#dd6d8e"];
-  return (
-    <section className="viz-card premium-chart">
-      <div className="viz-heading premium-chart-heading">
-        <span><BarChart3 size={17}/>{view.title}</span>
-        <span className="viz-hint">HORIZONTAL BAR · {display.rows.length} GROUPS</span>
-      </div>
-      <div className="premium-chart-meta">
-        <span>{display.categoryLabel}</span>
-        <span>{display.axisLabel}</span>
-      </div>
-      <div className="insight-bar-content">
-        {display.rows.map((row, index) => (
-          <div className="insight-bar-row" key={row.label + ":" + index}>
-            <div className="insight-bar-label" title={row.label}>{row.label}</div>
-            <div className="insight-bar-track" role="img"
-              aria-label={row.label + ": " + row.formatted}>
-              <div className="insight-bar-grid" aria-hidden="true">
-                {display.ticks.map(tick => <span key={tick.value}/>)}
-              </div>
-              <div className="insight-bar-fill" style={{
-                width: row.percentageOfScale + "%",
-                backgroundColor: barColors[index % barColors.length]
-              }}/>
-            </div>
-            <strong className="insight-bar-value">{row.formatted}</strong>
-          </div>
-        ))}
-        <div className="insight-bar-axis" aria-hidden="true">
-          <span/>
-          <div className="insight-bar-axis-ticks">
-            {display.ticks.map(tick => <span key={tick.value}>{tick.label}</span>)}
-          </div>
-          <span/>
-        </div>
-      </div>
-      {display.clipped > 0 && <div className="insight-chart-footnote">
-        Showing 20 of {display.rows.length + display.clipped} groups; see the query table for the other records.
-      </div>}
-      <div className="insight-chart-caption">Based on executed read-only SQL · Values shown on every bar</div>
-    </section>
-  );
-}
 function RateSummaryCards({ data }: { data: DataResult }) {
   const summary = rateHighlights(data);
   if (!summary) return null;
@@ -215,159 +127,15 @@ function RateSummaryCards({ data }: { data: DataResult }) {
 }
 
 function ChartView({ answer, view }: { answer: Answer; view: ChartSpec }) {
-  const { data } = answer;
-  const yKeys = view.yKeys.filter(key => data.columns.some(column => column.name === key)).slice(0, view.type === "line" || view.type === "area" ? 10 : 4);
-  const xKey = view.xKey;
-  if (!data.columns.some(col => col.name === xKey) || !yKeys.length || !data.rows.length) return null;
-  const kind = view.type;
-  const categoryColumn = data.columns.find(col => col.name === xKey);
-  const metricColumn = data.columns.find(col => col.name === yKeys[0]);
-  const seriesName = (key: string) => view.seriesLabels?.[key] || prettyLabel(key);
-  const tooltipValue = (value: unknown, name: unknown) => {
-    const key = String(name);
-    const resolved = data.columns.find(col => col.name === key) ||
-      data.columns.find(col => seriesName(col.name) === key) || metricColumn;
-    const formatted = valueText(value, resolved);
-    return view.unit === "%" && !formatted.endsWith("%") ? formatted + "%" : formatted;
-  };
-  const axisLabelX = view.xLabel || prettyLabel(xKey);
-  const axisLabelY = view.yLabel || prettyLabel(yKeys[0]);
-  const context = <div className="chart-context" aria-label="Chart dimensions">
-    <span><strong>{kind === "bar" ? "Groups" : "X-axis"}:</strong> {axisLabelX}</span>
-    <span><strong>{kind === "bar" ? "Value axis" : kind === "pie" || kind === "donut" ? "Slice values" : "Y-axis"}:</strong> {axisLabelY}</span>
-  </div>;
-  const premiumBars = prepareHorizontalBars(data, view);
-  if (premiumBars) return <InsightHorizontalBarChart data={data} view={view}/>;
-  if (kind === "card") {
-    const rows = data.rows.slice(0, data.rows.length === 1 ? 1 : 4);
-    return <section className="viz-card">
-      <div className="viz-heading"><span><BarChart3 size={16}/>{view.title}</span><span className="viz-hint">From returned data</span></div>
-      <div className="chart-card-grid">
-        {rows.flatMap((row, index) => (data.rows.length === 1 ? yKeys : yKeys.slice(0, 1)).map(key => (
-          <div className="chart-stat" key={index + ":" + key}>
-            <span className="chart-stat-label">{data.rows.length > 1 ? valueText(row[xKey], categoryColumn) : prettyLabel(key)}</span>
-            <strong>{valueText(row[key], data.columns.find(col => col.name === key))}</strong>
-            {data.rows.length > 1 && <small>{prettyLabel(key)} · Row {index + 1}</small>}
-          </div>
-        )))}
-      </div>
-    </section>;
+  const validX = answer.data.columns.some(column => column.name === view.xKey);
+  const validY = view.yKeys.some(key => answer.data.columns.some(column => column.name === key));
+  if (!validX || !validY || !answer.data.rows.length) {
+    return <div className="chart-unavailable">
+      <CircleHelp size={17}/> This figure cannot be drawn from the returned SQL columns.
+      Check the verified query results and choose a matching dimension or measure.
+    </div>;
   }
-  if (kind === "heatmap") return (
-    <section className="viz-card">
-      <div className="viz-heading"><span><BarChart3 size={16}/>{view.title}</span><span className="viz-hint">Value intensity</span></div>
-      <HeatmapView data={data} view={view}/>
-    </section>
-  );
-  if (data.rows.length < 2) return null;
-  // Sort numeric sequential axes for age/dose/distance trends. Never change
-  // the underlying query results; this only controls drawing order.
-  const orderedRows = (kind === "line" || kind === "area") &&
-    data.rows.length > 1 &&
-    data.rows.every(row => chartNumber(row[xKey]) !== null)
-      ? [...data.rows].sort((a, b) => Number(a[xKey]) - Number(b[xKey]))
-      : data.rows;
-  const normalized = orderedRows.slice(0, kind === "pie" || kind === "donut" ? 12 : 50)
-    .map(row => ({ ...row, ...Object.fromEntries([
-      ...yKeys.map(key => [key, chartNumber(row[key])]),
-      ...(kind === "scatter" ? [[xKey, chartNumber(row[xKey])]] : []),
-    ]) }));
-  const isBar = kind === "bar";
-  return (
-    <section className="viz-card">
-      <div className="viz-heading"><span><BarChart3 size={16}/>{view.title}</span><span className="viz-hint">{kind.replace("-", " ").toUpperCase()}</span></div>
-      {context}
-      <div className="chart-box">
-        <ResponsiveContainer width="100%" height="100%">
-          {kind === "pie" || kind === "donut" ? (
-            <PieChart>
-              <Tooltip formatter={(value, name) => tooltipValue(value, name)}/>
-              <Legend verticalAlign="bottom"/>
-              <Pie data={normalized} dataKey={yKeys[0]} nameKey={xKey} cx="50%" cy="44%" outerRadius="74%"
-                innerRadius={kind === "donut" ? "49%" : 0} paddingAngle={kind === "donut" ? 2 : 0}>
-                {normalized.map((_, index) => <Cell key={index} fill={COLORS[index % COLORS.length]}/>)}
-              </Pie>
-            </PieChart>
-          ) : kind === "scatter" ? (
-            <ScatterChart margin={{ top: 12, right: 25, left: 4, bottom: 10 }}>
-              <CartesianGrid stroke="#edf0f2"/>
-              <XAxis type="number" label={{ value: axisLabelX, position: "insideBottom", offset: -10 }} dataKey={xKey} name={axisLabelX} tick={{ fill: "#90949c", fontSize: 10 }} tickFormatter={v => valueText(v, categoryColumn)}/>
-              <YAxis type="number" label={{ value: axisLabelY, angle: -90, position: "insideLeft" }} dataKey={yKeys[0]} name={axisLabelY} tick={{ fill: "#90949c", fontSize: 10 }} tickFormatter={v => valueText(v, metricColumn)}/>
-              <Tooltip cursor={{ strokeDasharray: "3 3" }} formatter={(value, name) => tooltipValue(value, name)}/>
-              <Scatter data={normalized} fill={COLORS[0]} name={seriesName(yKeys[0])}/>
-            </ScatterChart>
-          ) : kind === "radar" ? (
-            <RadarChart data={normalized.slice(0, 14)} outerRadius="66%">
-              <PolarGrid stroke="#e8ebf0"/>
-              <PolarAngleAxis dataKey={xKey} tick={{ fill: "#818892", fontSize: 10 }}/>
-              <PolarRadiusAxis tick={{ fill: "#9ca3af", fontSize: 9 }} tickFormatter={v => valueText(v, metricColumn)}/>
-              <Tooltip formatter={(value, name) => tooltipValue(value, name)}/>
-              {yKeys.length > 1 && <Legend/>}
-              {yKeys.map((key, i) => <Radar key={key} name={seriesName(key)} dataKey={key}
-                stroke={COLORS[i]} fill={COLORS[i]} fillOpacity={0.14}/>)}
-            </RadarChart>
-          ) : kind === "area" ? (
-            <AreaChart data={normalized} margin={{ top: 10, right: 18, left: 0, bottom: 7 }}>
-              <CartesianGrid stroke="#edf0f2" vertical={false}/>
-              <XAxis dataKey={xKey} label={{ value: axisLabelX, position: "insideBottom", offset: -10 }} tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false} minTickGap={25}
-                tickFormatter={v => valueText(v, categoryColumn).slice(0, 12)}/>
-              <YAxis label={{ value: axisLabelY, angle: -90, position: "insideLeft" }} tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false} width={70} tickFormatter={v => valueText(v, metricColumn)}/>
-              <Tooltip formatter={(value, name) => tooltipValue(value, name)}/>
-              {yKeys.length > 1 && <Legend/>}
-              {yKeys.map((key,i) => <Area key={key} name={seriesName(key)} type="monotone" dataKey={key}
-                stroke={COLORS[i % COLORS.length]} fill={COLORS[i % COLORS.length]} fillOpacity={0.12} strokeWidth={2.4}/>)}
-            </AreaChart>
-          ) : kind === "line" ? (
-            <LineChart data={normalized} margin={{ top: 10, right: 18, left: 0, bottom: 7 }}>
-              <CartesianGrid stroke="#edf0f2" vertical={false}/>
-              <XAxis dataKey={xKey} tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false} minTickGap={25}
-                tickFormatter={v => valueText(v, categoryColumn).slice(0, 12)}/>
-              <YAxis tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false} width={55} tickFormatter={v => valueText(v, metricColumn)}/>
-              <Tooltip formatter={(value, name) => tooltipValue(value, name)}/>
-              {yKeys.length > 1 && <Legend wrapperStyle={{fontSize:10,whiteSpace:"normal"}}/>}
-              {yKeys.map((key,i) => <Line key={key} name={seriesName(key)} type="monotone" dataKey={key}
-                stroke={COLORS[i % COLORS.length]} strokeWidth={2.6} dot={{ r: 2.5 }} activeDot={{ r: 4.5 }}/>)}
-            </LineChart>
-          ) : kind === "combo" ? (
-            <ComposedChart data={normalized} margin={{ top: 10, right: 18, left: 0, bottom: 7 }}>
-              <CartesianGrid stroke="#edf0f2" vertical={false}/>
-              <XAxis dataKey={xKey} label={{ value: axisLabelX, position: "insideBottom", offset: -10 }} tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false}
-                tickFormatter={v => valueText(v, categoryColumn).slice(0, 12)}/>
-              <YAxis tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false} width={55} tickFormatter={v => valueText(v, metricColumn)}/>
-              <Tooltip formatter={(value, name) => tooltipValue(value, name)}/><Legend/>
-              <Bar name={seriesName(yKeys[0])} dataKey={yKeys[0]} fill={COLORS[0]} radius={[4,4,0,0]} maxBarSize={46}/>
-              <Line name={seriesName(yKeys[1])} type="monotone" dataKey={yKeys[1]} stroke={COLORS[1]} strokeWidth={2.4}/>
-            </ComposedChart>
-          ) : (
-            <BarChart data={normalized} layout={isBar ? "vertical" : "horizontal"}
-              margin={{ top: 10, right: 18, left: isBar ? 10 : 0, bottom: 7 }}>
-              <CartesianGrid stroke="#edf0f2" vertical={!isBar} horizontal={isBar}/>
-              {isBar ? (
-                <>
-                  <XAxis type="number" label={{ value: axisLabelY, position: "insideBottom", offset: -10 }} tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={v => valueText(v, metricColumn)}/>
-                  <YAxis type="category" label={{ value: axisLabelX, angle: -90, position: "insideLeft" }} dataKey={xKey} width={135} tick={{ fill: "#90949c", fontSize: 10 }}
-                    tickFormatter={v => valueText(v, categoryColumn).slice(0, 17)}/>
-                </>
-              ) : (
-                <>
-                  <XAxis type="category" label={{ value: axisLabelX, position: "insideBottom", offset: -10 }} dataKey={xKey} tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false}
-                    axisLine={false} tickFormatter={v => valueText(v, categoryColumn).slice(0, 13)}/>
-                  <YAxis type="number" label={{ value: axisLabelY, angle: -90, position: "insideLeft" }} tick={{ fill: "#90949c", fontSize: 10 }} tickLine={false} axisLine={false} width={70}/>
-                </>
-              )}
-              <Tooltip formatter={(value, name) => tooltipValue(value, name)}/>
-              {yKeys.length > 1 && <Legend/>}
-              {yKeys.map((key,i) => <Bar key={key} name={seriesName(key)} dataKey={key} fill={COLORS[i]}
-                stackId={kind === "stacked-column" ? "stack" : undefined}
-                radius={kind === "stacked-column" ? 0 : isBar ? [0,4,4,0] : [4,4,0,0]}
-                maxBarSize={46}/>)}
-            </BarChart>
-          )}
-        </ResponsiveContainer>
-      </div>
-      {view.note && <p className="chart-explanation">{view.note}</p>}
-    </section>
-  );
+  return <StaticFigure data={answer.data} view={view}/>;
 }
 
 function ClarificationCustomInput({
@@ -410,17 +178,11 @@ function AnswerCanvas({ answer, question }: { answer: Answer; question: string }
         <div className="charts-grid single-chart">
           {panels.map((panel, index) => (
             <div className="chart-panel-block" key={panel.kind + ":" + index}>
-              {(() => {
-                const appropriate = buildDashboardCharts(question, panel.data, [{
-                  type: panel.kind, title: panel.title, xKey: panel.xKey, yKeys: panel.yKeys
-                }]).find(view => view.type === panel.kind);
-                return appropriate ? <ChartView answer={{
-                  data: panel.data, report: { ...report, visualizations: [] }, sql: panel.sql
-                }} view={appropriate}/> : <div className="chart-unavailable">
-                  <CircleHelp size={17}/> The requested {panel.kind} chart does not fit these
-                  verified measurements. The executed data and SQL are still available below.
-                </div>;
-              })()}
+              <ChartView answer={{
+                data: panel.data, report: { ...report, visualizations: [] }, sql: panel.sql
+              }} view={{
+                type: panel.kind, title: panel.title, xKey: panel.xKey, yKeys: panel.yKeys
+              }}/>
               {panels.length > 1 && (
                 <details className="chart-panel-sql">
                   <summary><Database size={14}/> Executed SQL for {panel.kind} chart <ChevronDown size={14}/></summary>
